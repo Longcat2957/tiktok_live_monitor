@@ -81,3 +81,58 @@ it('clears a pending retry on unmount', () => {
   vi.advanceTimersByTime(60000);
   expect(FakeSocket.instances).toHaveLength(1);
 });
+
+it('validates enriched comments, safe avatars, badges and activities', () => {
+  const enriched = { ...comment('x'), user: { ...comment('x').user,
+    avatar_url: '/demo-avatar-0.svg', badges: [{ kind: 'fan' as const, level: 12 }] } };
+  expect(parseMessage(JSON.stringify(enriched))).toEqual(enriched);
+  const activity = { type: 'activity', id: 'gift', received_at: enriched.received_at,
+    user: enriched.user, kind: 'gift', gift_name: '<b>장미</b>', count: 5 };
+  expect(parseMessage(JSON.stringify(activity))).toEqual(activity);
+  expect(parseMessage(JSON.stringify({ ...activity, count: 0 }))).toBeNull();
+  expect(appendComment<import('./types').FeedMessage>([enriched], activity as import('./types').ActivityMessage, 1)).toEqual([activity]);
+});
+
+it('keeps comment text when optional profile data is invalid and never uses unsafe avatars', () => {
+  const original = comment('optional');
+  for (const avatar_url of ['javascript:alert(1)', '//example.com/a', 'https://user:secret@example.com/a',
+    'http://example.com/a', '/unexpected.svg', 123]) {
+    const raw = JSON.stringify({ ...original, user: { ...original.user, avatar_url, badges: 'invalid' } });
+    expect(parseMessage(raw)).toEqual(original);
+  }
+  expect(parseMessage(JSON.stringify({ ...original, user: { ...original.user,
+    avatar_url: 'https://example.com/avatar.jpg', badges: null } }))).toEqual({ ...original,
+    user: { ...original.user, avatar_url: 'https://example.com/avatar.jpg' } });
+  for (const user of [null, {}, { nickname: 1, unique_id: 'id' }, { nickname: 'name' },
+    { nickname: 'a'.repeat(257), unique_id: 'id' }]) {
+    expect(parseMessage(JSON.stringify({ ...original, user }))).toBeNull();
+  }
+});
+
+it('retains only valid unique badges in receive order for comments and activities', () => {
+  const user = { ...comment('badges').user, badges: [
+    null, { kind: 'unknown', level: 1 }, { kind: 'fan', level: -1 },
+    { kind: 'fan', level: 10001 }, { kind: 'fan', level: 1.5 },
+    { kind: 'fan', level: 12 }, { kind: 'fan', level: 99 },
+    { kind: 'subscriber', level: null }, { kind: 'subscriber', level: 3 }
+  ] };
+  const expected = { ...comment('badges').user,
+    badges: [{ kind: 'fan', level: 12 }, { kind: 'subscriber', level: null }] };
+  const activity = { type: 'activity', id: 'activity', received_at: comment('badges').received_at,
+    user, kind: 'follow', gift_name: '', count: 1 };
+  for (const message of [{ ...comment('badges'), user }, activity]) {
+    expect(parseMessage(JSON.stringify(message))).toEqual({ ...message, user: expected });
+  }
+  expect(user.badges).toHaveLength(9);
+  expect(parseMessage(JSON.stringify({ ...comment('none'), user: { ...user,
+    badges: [{ kind: 'fan', level: -1 }] } }))).toEqual({ ...comment('none'),
+    user: { ...comment('none').user, badges: [] } });
+});
+
+it('validates live snapshots and preserves unknown counts', () => {
+  const status = { type: 'status', source: 'mock', state: 'connected', message: '',
+    session_id: 's', username: null, comment_history_size: 30,
+    live: { state: 'paused', viewers: null, likes: 1000 } };
+  expect(parseMessage(JSON.stringify(status))).toEqual(status);
+  expect(parseMessage(JSON.stringify({ ...status, live: { ...status.live, viewers: -1 } }))).toBeNull();
+});

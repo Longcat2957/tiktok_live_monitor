@@ -1,7 +1,9 @@
 import asyncio
+from collections.abc import Iterator
+from typing import Literal
 
-from ..models import Comment, Status, User
-from ..websocket import WebSocketManager, enqueue_comment
+from ..models import Activity, Badge, Comment, LiveInfo, User
+from .base import SourceSink
 
 SAMPLES = [
     ("민수", "minsu123", "검정색도 있나요?"),
@@ -17,21 +19,56 @@ SAMPLES = [
 
 class MockSource:
     def __init__(
-        self, queue: asyncio.Queue[Comment], manager: WebSocketManager, interval: float
+        self,
+        sink: SourceSink,
+        interval: float,
+        sequence: Iterator[int],
     ) -> None:
-        self.queue = queue
-        self.manager = manager
+        self.sink = sink
         self.interval = interval
+        self.sequence = sequence
 
     async def run(self) -> None:
-        self.manager.set_status(
-            Status(source="mock", state="connected", message="모의 댓글 수신 중")
-        )
-        index = 0
+        self.sink.status("connected", "모의 댓글 수신 중")
+        step = 0
         while True:
-            nickname, unique_id, body = SAMPLES[index % len(SAMPLES)]
-            enqueue_comment(
-                self.queue, Comment(user=User(nickname=nickname, unique_id=unique_id), comment=body)
+            phase = step % 24
+            state: Literal["live", "paused", "ended"] = (
+                "paused" if phase in (12, 13) else "ended" if phase in (20, 21) else "live"
             )
-            index += 1
+            self.sink.live(
+                LiveInfo(
+                    state=state,
+                    viewers=128 + step % 37,
+                    likes=1200 + step * 17,
+                )
+            )
+            if state == "live":
+                index = next(self.sequence)
+                nickname, unique_id, body = SAMPLES[index % len(SAMPLES)]
+                badges = []
+                if index % 3 != 2:
+                    badges.append(Badge(kind="subscriber"))
+                if index % 3 != 0:
+                    badges.append(Badge(kind="fan", level=index % 25 + 1))
+                user = User(
+                    nickname=nickname,
+                    unique_id=unique_id,
+                    badges=badges,
+                    avatar_url=f"/demo-avatar-{index % 3}.svg" if index % 4 != 3 else None,
+                )
+                self.sink.publish(Comment(user=user, comment=f"[데모 #{index + 1}] {body}"))
+                activity_kind = {2: "gift", 4: "follow", 6: "share", 8: "subscribe"}.get(phase)
+                if activity_kind is not None:
+                    self.sink.publish(
+                        Activity.model_validate(
+                            {
+                                "kind": activity_kind,
+                                "user": user,
+                                "gift_name": "장미",
+                                "count": 5 if activity_kind == "gift" else 1,
+                            }
+                        )
+                    )
+            step += 1
             await asyncio.sleep(self.interval)

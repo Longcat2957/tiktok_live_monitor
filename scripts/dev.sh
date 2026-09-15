@@ -10,7 +10,7 @@ Linux 데스크톱에서 의존성 설치 → mock 개발 서버 → Chromium �
 Ctrl+C로 서버와 전용 브라우저를 함께 종료합니다.
 
 환경변수:
-  COMMENT_SOURCE=tiktok  실제 방송 연결 (.env의 계정 설정 사용, 기본 mock)
+  COMMENT_SOURCE=tiktok  첫 화면의 초기 모드 (계정은 화면에서 입력, 기본 mock)
   CHROMIUM_BIN=/경로     Chromium 실행 파일 직접 지정
   DEV_OPEN_BROWSER=0    브라우저 없이 서버만 실행 (기본 1)
 EOF

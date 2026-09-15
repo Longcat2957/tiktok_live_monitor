@@ -46,6 +46,8 @@ docker compose up -d --build --wait
 
 Python 3.11 이상, uv, Node.js 22.20 이상(22 계열 권장), pnpm 10.20.0이 필요합니다. 버전은 `backend/uv.lock`, `frontend/pnpm-lock.yaml`로 고정합니다. 주요 검증 버전: TikTokLive 7.0.1, FastAPI 0.141.1, Svelte 5.57.0, SvelteKit 2.70.3, TypeScript 6.0.3. TypeScript 7은 현재 SvelteKit peer 지원 범위 밖이라 사용하지 않습니다.
 
+도구가 없다면 먼저 [개발 도구 설치](docs/installation-dev.md#1-개발-도구-설치)를 진행하세요. 아래 명령은 도구 설치 후 저장소 루트에서 시작합니다.
+
 ```bash
 cd backend
 uv sync --frozen
@@ -56,8 +58,6 @@ COMMENT_SOURCE=mock uv run uvicorn app.main:app --reload --host 127.0.0.1 --port
 
 ```bash
 cd frontend
-corepack enable
-corepack prepare pnpm@10.20.0 --activate
 pnpm install --frozen-lockfile
 pnpm dev
 ```

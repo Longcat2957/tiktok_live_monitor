@@ -7,32 +7,42 @@ Linux/macOS의 Bash 기준입니다. Windows에서는 WSL2 안에서 같은 절�
 | 도구 | 프로젝트 기준 |
 | --- | --- |
 | Git, curl | 저장소 복제와 설치 파일 다운로드 |
-| Python | 3.11 (`uv`로 설치) |
-| uv | 0.12.8 (CI와 동일) |
+| Python | 3.11 (`uv sync`가 필요 시 설치) |
+| uv | CI 검증 버전 0.12.8 |
 | Node.js | 22.20.0 (CI와 동일) |
 | pnpm | 10.20.0 (`frontend/package.json`에 지정) |
 
-Git/curl은 OS 패키지 관리자로 설치합니다. [Node.js 공식 다운로드](https://nodejs.org/en/download)에서 22.20.0을 선택해 설치한 뒤 새 터미널을 여세요.
+Git/curl은 OS 패키지 관리자로 설치합니다. 이미 사용 중인 uv와 프로젝트 버전에 맞는 Node.js/pnpm이 있다면 해당 설치 단계는 건너뛰세요.
 
-[uv 공식 설치 방식](https://docs.astral.sh/uv/getting-started/installation/)으로 CI와 같은 버전을 설치합니다.
+### 백엔드: uv
+
+uv는 Python 버전, 가상환경, Python 패키지를 관리합니다. 아직 없다면 [공식 설치 스크립트](https://docs.astral.sh/uv/getting-started/installation/)로 설치합니다.
 
 ```bash
-curl -LsSf https://astral.sh/uv/0.12.8/install.sh | sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-설치 안내에 따라 PATH를 적용하거나 터미널을 다시 열고 실행합니다.
+기본 설치 경로에서는 다음 명령으로 현재 터미널의 PATH를 적용하고 설치를 확인합니다. 설치 경로를 따로 지정했다면 설치기가 출력한 안내를 따르세요.
 
 ```bash
-uv python install 3.11
-corepack enable
-corepack prepare pnpm@10.20.0 --activate
-git --version
+. "$HOME/.local/bin/env"
 uv --version
+```
+
+Python은 아래 `uv sync --locked` 단계에서 `backend/.python-version`의 3.11에 맞춰 준비됩니다. 사용할 Python이 없으면 uv가 다운로드하므로 별도 Python 설치 명령은 필요하지 않습니다. [uv의 자동 Python 다운로드](https://docs.astral.sh/uv/guides/install-python/#automatic-python-downloads)
+
+### 프론트엔드: Node.js와 pnpm
+
+[Node.js 공식 다운로드](https://nodejs.org/en/download)에서 22.20.0을 선택해 설치한 뒤 새 터미널을 엽니다. Node.js와 함께 제공되는 npm으로 pnpm을 설치합니다. [pnpm 10 공식 npm 설치 방식](https://pnpm.io/10.x/installation#using-npm)
+
+```bash
 node --version
+npm --version
+npm install --global pnpm@10.20.0
 pnpm --version
 ```
 
-`corepack enable`에서 권한 오류가 나면 사용자 계정에 설치한 Node.js 환경에서 실행하세요.
+`pnpm --version`이 `10.20.0`인지 확인합니다. Corepack으로 이미 이 버전을 사용 중이라면 그대로 사용하면 됩니다. npm 전역 설치에서 `EACCES`가 발생하면 사용자 계정에서 관리하는 Node.js 설치 환경을 사용하세요.
 
 ## 2. 저장소와 설정 준비
 

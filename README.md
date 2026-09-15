@@ -2,17 +2,22 @@
 
 Raspberry Pi 4 + Raspberry Pi OS Desktop 64-bit에서 실행하는 한 계정 전용 댓글 모니터입니다. 모든 일반 댓글을 받은 순서대로 표시하며, 최신 댓글 30개만 보관합니다. TikTok 연결 및 브라우저 연결은 자동으로 복구됩니다. 댓글 저장, 분류, 로그인, 외부 DB는 없습니다.
 
+## 설치 가이드
+
+- [개발 환경 설치](docs/installation-dev.md): 도구 설치, mock 개발 서버, 테스트와 빌드.
+- [배포 환경 설치](docs/installation-deploy.md): Raspberry Pi, Docker Compose, Chromium kiosk와 운영.
+
 ## 바로 실행: mock 데모
 
 Docker Engine과 Compose plugin이 있는 환경에서 저장소 루트로 이동합니다.
 
 ```bash
-cp .env.example .env
+test -f .env || cp .env.example .env
 # .env에서 COMMENT_SOURCE=mock으로 수정
 docker compose up -d --build --wait
 ```
 
-호스트 브라우저에서 `http://127.0.0.1:8000`을 엽니다. 초기 구현 검증용 작업 디렉터리에는 이미 mock `.env`가 생성되어 있습니다. 기존 `.env`는 덮어쓰지 마세요. 실제 방송 연결은 `.env`에서 `COMMENT_SOURCE=tiktok`, `TIKTOK_USERNAME=@방송계정`을 설정한 다음 `docker compose up -d`로 컨테이너를 재생성합니다. 환경변수 변경에는 `restart`만으로 충분하지 않습니다.
+호스트 브라우저에서 `http://127.0.0.1:8000`을 엽니다. 기존 `.env`가 있다면 복사 단계를 생략하고 해당 파일을 수정하세요. 실제 방송 연결은 `.env`에서 `COMMENT_SOURCE=tiktok`, `TIKTOK_USERNAME=@방송계정`을 설정한 다음 `docker compose up -d`로 컨테이너를 재생성합니다. 환경변수 변경에는 `restart`만으로 충분하지 않습니다.
 
 ## 구성과 설정
 
@@ -99,54 +104,7 @@ uv/pnpm 의존성을 lockfile 기준으로 설치하고 다운로드 캐시를 �
 
 ## 새 Raspberry Pi 설치
 
-1. Raspberry Pi Imager로 **Raspberry Pi OS Desktop 64-bit**를 설치합니다. Wi-Fi/유선 네트워크와 Desktop 사용자를 설정합니다. Pi 4 RAM 4GB, 정상 전원 공급장치를 권장합니다.
-2. Pi에서 다음 기본 패키지를 설치합니다.
-
-```bash
-sudo apt update
-sudo apt install -y ca-certificates curl git chromium fonts-noto-cjk fonts-noto-color-emoji
-```
-
-3. Docker 공식 Debian 저장소를 설정합니다. Pi OS 64-bit에는 [Docker Debian 설치 문서](https://docs.docker.com/engine/install/debian/)를 적용합니다. 이미 Docker를 설치했다면 저장소를 중복 설정하지 말고 `docker compose version`부터 확인하세요.
-
-```bash
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
-. /etc/os-release
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-sudo systemctl enable --now docker
-sudo usermod -aG docker "$USER"
-```
-
-로그아웃 후 다시 로그인하고 `docker info`, `docker compose version`을 확인합니다. docker 그룹 권한은 관리자 수준입니다. 운영 호스트에는 uv/Node/pnpm을 별도로 설치할 필요가 없습니다.
-
-4. 이 저장소 전체를 Pi의 `~/tiktok_live_monitor`로 복사합니다(또는 사용하는 Git 원격 저장소를 이 경로에 clone). `backend/uv.lock`과 `frontend/pnpm-lock.yaml`도 포함해야 합니다.
-
-```bash
-cd ~/tiktok_live_monitor
-./scripts/install.sh
-# 최초 실행은 .env를 만들고 종료합니다.
-nano .env
-./scripts/install.sh
-```
-
-설치 스크립트는 Docker/Compose/Chromium/labwc와 권한을 확인하고, Docker 부팅 시작, 이미지 빌드, Compose healthy 대기, labwc autostart 등록을 수행합니다. 전체 스크립트를 sudo로 실행하지 마세요. 기존 labwc autostart는 타임스탬프 백업을 남기고 마지막에 실행 항목을 추가합니다. 사용자 autostart가 없으면 시스템 autostart를 먼저 복사해 Desktop 기본 실행 항목을 보존합니다. 반복 실행 시 같은 항목을 중복 추가하지 않습니다. 저장소 경로를 옮겼다면 autostart의 기존 경로도 변경하세요.
-
-5. `sudo raspi-config`에서 Desktop 자동 로그인을 활성화하고 화면 blanking을 비활성화합니다. Wayland/labwc Desktop 세션을 사용합니다. 자동 로그인 사용자는 설치 스크립트를 실행한 사용자와 같아야 합니다.
-6. Desktop의 디스플레이 설정(버전에 따라 Screen Configuration 또는 Control Centre → Screens)에서 HDMI 출력 방향을 **90도 또는 270도**로 변경하고 적용·저장합니다. CSS 회전은 없습니다. 1080×1920 viewport가 나오도록 모니터 설치 방향에 맞춰 선택합니다. [Raspberry Pi 디스플레이 설정 문서](https://www.raspberrypi.com/documentation/computers/configuration.html)를 참고하세요.
-7. 재부팅합니다. Docker가 기존 컨테이너를 복구하고 labwc 로그인 후 kiosk가 실행됩니다. health와 UI 응답을 기다리므로 초기 빌드나 네트워크 복구에 시간이 걸려도 3초 간격으로 계속 대기합니다. 대기 로그는 30초 간격입니다.
-
-수동 kiosk 확인:
-
-```bash
-cd ~/tiktok_live_monitor
-./deploy/wait-for-app.sh
-```
-
-SSH만 있는 세션에서는 GUI 환경변수가 없으므로 Desktop 터미널에서 실행합니다. Chromium은 호스트에서 실행하며 컨테이너에는 넣지 않습니다. `chromium`과 `chromium-browser`를 자동 탐색하고 독립 프로필을 사용합니다. 브라우저를 직접 강제 종료한 경우에는 스크립트를 다시 실행하거나 재로그인합니다. 서버 단절은 페이지 안에서 자동 복구합니다.
+[배포 환경 설치 가이드](docs/installation-deploy.md)에 OS 준비, Docker 설치, mock 검증, Chromium 자동 실행과 업데이트 절차를 정리했습니다.
 
 ## 운영 명령
 

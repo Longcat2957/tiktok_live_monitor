@@ -89,6 +89,14 @@ docker compose up -d --wait
 
 Node 빌드 단계와 Python 의존성 단계를 분리하며 최종 이미지에는 백엔드, production 가상환경, 정적 UI만 들어갑니다. 비root UID 10001, 읽기 전용 루트, `/tmp` tmpfs, localhost 포트만 사용합니다. Node, pnpm, uv 및 개발 의존성은 최종 이미지에 복사하지 않습니다. Python slim 베이스가 제공하는 pip는 남아 있지만 런타임 패키지 설치에는 사용하지 않습니다.
 
+## GitHub Actions CI
+
+`main` 푸시 및 `main` 대상 PR에서 [CI](https://github.com/Longcat2957/tiktok_live_monitor/actions/workflows/ci.yml)가 실행됩니다.
+백엔드 pytest/mypy와 프론트엔드 check/test/build를 한 작업에서 검사합니다. TikTok 인증 없이 mock 모드를 사용합니다.
+uv/pnpm 의존성을 lockfile 기준으로 설치하고 다운로드 캐시를 재사용합니다. 같은 브랜치 또는 PR의 새 실행은 이전 실행을 취소하며, 작업 제한 시간은 10분입니다.
+
+현재 자동화 범위는 CI입니다. 이미지 게시와 장비 자동 배포는 없으며, 배포는 기존 `scripts/install.sh`와 `scripts/update.sh`를 사용합니다.
+
 ## 새 Raspberry Pi 설치
 
 1. Raspberry Pi Imager로 **Raspberry Pi OS Desktop 64-bit**를 설치합니다. Wi-Fi/유선 네트워크와 Desktop 사용자를 설정합니다. Pi 4 RAM 4GB, 정상 전원 공급장치를 권장합니다.

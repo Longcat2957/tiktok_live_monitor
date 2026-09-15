@@ -8,6 +8,9 @@ if __name__ == "__main__":
         "app.main:app",
         host=settings.host,
         port=settings.port,
-        log_level=settings.log_level.lower(),
+        log_level="info",
+        timeout_graceful_shutdown=15,
+        ws_max_size=1024,
+        forwarded_allow_ips="",
         ws="websockets-sansio",
     )

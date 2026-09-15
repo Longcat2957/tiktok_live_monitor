@@ -23,6 +23,9 @@ importers:
       '@types/node':
         specifier: ^22.20.2
         version: 22.20.2
+      m3-svelte:
+        specifier: 7.2.0
+        version: 7.2.0(svelte@5.57.0)(vite-plugin-functions-mixins@0.4.1(vite@8.3.0(@types/node@22.20.2)))
       svelte:
         specifier: ^5.57.0
         version: 5.57.0
@@ -35,11 +38,17 @@ importers:
       vite:
         specifier: ^8.3.0
         version: 8.3.0(@types/node@22.20.2)
+      vite-plugin-functions-mixins:
+        specifier: ^0.4.1
+        version: 0.4.1(vite@8.3.0(@types/node@22.20.2))
       vitest:
         specifier: ^5.0.0
         version: 5.0.0(@types/node@22.20.2)(vite@8.3.0(@types/node@22.20.2))
 
 packages:
+
+  '@iconify/types@2.0.0':
+    resolution: {integrity: sha512-+wluvCrRhXrhyOmRDJ3q8mux9JkKy5SJ/v8ol2tu4FVjyYvtEzkc/3pK15ET6RKg4b4w4BmTk1+gsCUhf21Ykg==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -56,6 +65,9 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@ktibow/iconset-material-symbols@0.0.1764827375':
+    resolution: {integrity: sha512-D5r08cbHpLn+G2G03Zj3nV0afQpS/IV4kD0g7rDHpU4k7tC/CUt6+PbddKISTWz8u+SRPQNaR5cZU0e9IlUoWg==}
 
   '@oxc-project/types@0.149.0':
     resolution: {integrity: sha512-Efcc+iF0j3Bf67YjEqIqWXbX5XddXoK/Mw4K1/JuXwRCZ8N16VR7iT23nlCc9XrveFVh/E5Rqs2StT0V8v9LdA==}
@@ -389,6 +401,18 @@ packages:
   locate-character@3.0.0:
     resolution: {integrity: sha512-SW13ws7BjaeJ6p7Q6CO2nchbYEc3X3J6WrmTTDto7yMPqVSZTUyY5Tjbid+Ab8gLnATtygYtiDIJGQRRn2ZOiA==}
 
+  m3-svelte@7.2.0:
+    resolution: {integrity: sha512-el8ZJ+b5xZV00T/uU6jEIf48URX9B2FpZW+jTYG9KxVaJ7qvH+2BDb9SUhCZ5l+5m95G8HTwYKtuGmgJCcY9vw==}
+    peerDependencies:
+      '@ktibow/material-color-utilities-nightly': ^0.4.1768930731000
+      svelte: ^5.40.0
+      vite-plugin-functions-mixins: ^0.4.1
+    peerDependenciesMeta:
+      '@ktibow/material-color-utilities-nightly':
+        optional: true
+      vite-plugin-functions-mixins:
+        optional: true
+
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
 
@@ -502,6 +526,11 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
+  vite-plugin-functions-mixins@0.4.1:
+    resolution: {integrity: sha512-xl9wCfeEvJls+5wnEa76xQ3nrnNOw1Zm9C4mc49dQrHTXRNTV3mwOsFILGxRsjOCm6mJwp3TfjIDFbyFPppe1g==}
+    peerDependencies:
+      vite: ^7.2.4
+
   vite@8.3.0:
     resolution: {integrity: sha512-lhZBVvEHefgE+HQZC9O7EBJgCU/nVzFNl7vkS4RE0APtWLP02/8QVIkQtzBxPquh7lq5/78NHipTj7ODQ6XuyQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -604,6 +633,8 @@ packages:
 
 snapshots:
 
+  '@iconify/types@2.0.0': {}
+
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
@@ -622,6 +653,10 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
+
+  '@ktibow/iconset-material-symbols@0.0.1764827375':
+    dependencies:
+      '@iconify/types': 2.0.0
 
   '@oxc-project/types@0.149.0': {}
 
@@ -847,6 +882,14 @@ snapshots:
 
   locate-character@3.0.0: {}
 
+  m3-svelte@7.2.0(svelte@5.57.0)(vite-plugin-functions-mixins@0.4.1(vite@8.3.0(@types/node@22.20.2))):
+    dependencies:
+      '@iconify/types': 2.0.0
+      '@ktibow/iconset-material-symbols': 0.0.1764827375
+      svelte: 5.57.0
+    optionalDependencies:
+      vite-plugin-functions-mixins: 0.4.1(vite@8.3.0(@types/node@22.20.2))
+
   magic-string@0.30.21:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
@@ -969,6 +1012,10 @@ snapshots:
   typescript@6.0.3: {}
 
   undici-types@6.21.0: {}
+
+  vite-plugin-functions-mixins@0.4.1(vite@8.3.0(@types/node@22.20.2)):
+    dependencies:
+      vite: 8.3.0(@types/node@22.20.2)
 
   vite@8.3.0(@types/node@22.20.2):
     dependencies:

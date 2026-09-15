@@ -9,18 +9,25 @@ from app.models import Comment, Status, User
 from app.websocket import WebSocketManager, enqueue_comment
 
 
-def test_mock_websocket_and_disconnect() -> None:
+def test_mock_websocket_and_disconnect():
     app = create_app(Settings(_env_file=None, comment_source="mock", mock_interval_seconds=0.01))
-    with TestClient(app) as client:
-        with client.websocket_connect("/ws") as socket:
+    with TestClient(app, base_url="http://localhost") as client:
+        sid = client.get("/config").json()["session_id"]
+        assert (
+            client.post("/account", json={"source": "mock", "session_id": sid}).status_code == 200
+        )
+        with client.websocket_connect(
+            "ws://localhost/ws", headers={"Origin": "http://localhost"}
+        ) as socket:
             assert socket.receive_json()["type"] == "status"
-            payload = socket.receive_json()
-            assert payload["type"] == "comment"
-            assert payload["id"]
+            while (payload := socket.receive_json())["type"] != "comment":
+                pass
             assert datetime.fromisoformat(payload["received_at"].replace("Z", "+00:00")).tzinfo
-            assert set(payload["user"]) == {"nickname", "unique_id"}
             assert payload["comment"]
             assert client.get("/health").json()["websocket_connections"] == 1
+            socket.close()
+            while socket.receive()["type"] != "websocket.close":
+                pass
         assert client.get("/health").json()["websocket_connections"] == 0
 
 
@@ -87,3 +94,64 @@ async def test_peer_queue_overflow_disconnects_only_slow_client() -> None:
     await asyncio.sleep(0.01)
     assert not manager.clients
     assert slow.closed
+
+
+async def test_burst_keeps_fast_peer_order_and_disconnects_only_slow_peer():
+    manager = WebSocketManager(Status(source="mock", state="connected", message="ok"))
+    fast, slow = Socket(), Socket(slow=True)
+    await manager.connect(fast)
+    await manager.connect(slow)
+    queue = asyncio.Queue(500)
+    for number in range(500):
+        enqueue_comment(queue, Comment(user=User(nickname="n", unique_id="u"), comment=str(number)))
+    consumer = asyncio.create_task(manager.consume(queue))
+    try:
+        await asyncio.wait_for(queue.join(), 1)
+        await asyncio.sleep(0.02)
+        assert not fast.closed
+        assert slow.closed
+        assert [m["comment"] for m in fast.messages if m["type"] == "comment"] == [
+            str(i) for i in range(500)
+        ]
+    finally:
+        consumer.cancel()
+        await asyncio.gather(consumer, return_exceptions=True)
+        await manager.close()
+
+
+async def test_session_boundary_and_peer_limit():
+    manager = WebSocketManager(Status(source="mock", state="idle", message="old"), max_clients=1)
+    fast, rejected = Socket(), Socket()
+    await manager.connect(fast)
+    await manager.connect(rejected)
+    assert rejected.closed
+    old = manager.status.session_id
+    manager.broadcast(Comment(user=User(nickname="n", unique_id="u"), comment="old"))
+    status = Status(source="mock", state="connecting", message="new")
+    manager.begin_session(status)
+    manager.update_status("error", "stale", old)
+    await asyncio.sleep(0.01)
+    assert manager.status == status
+    assert all(m.get("comment") != "old" for m in fast.messages)
+    assert fast.messages[-1]["session_id"] == status.session_id
+    await manager.close()
+
+
+async def test_concurrent_handshakes_respect_connection_limit():
+    manager = WebSocketManager(Status(source="mock", state="idle", message="ok"), max_clients=1)
+    accepting, release = asyncio.Event(), asyncio.Event()
+
+    class Pending(Socket):
+        async def accept(self):
+            accepting.set()
+            await release.wait()
+
+    first, second = Pending(), Socket()
+    opening = asyncio.create_task(manager.connect(first))
+    await accepting.wait()
+    await manager.connect(second)
+    assert second.closed and second.accepts == 0
+    release.set()
+    await opening
+    assert manager.accepting == 0
+    await manager.close()

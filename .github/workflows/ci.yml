@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,7 +17,7 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
       COMMENT_SOURCE: mock
     steps:
@@ -37,6 +38,13 @@ jobs:
           uv sync --locked
           uv run --no-sync pytest -q
           uv run --no-sync mypy
+          uv run --no-sync ruff check app tests
+
+      - name: Check shell syntax
+        run: |
+          for script in scripts/*.sh deploy/*.sh; do
+            bash -n "$script"
+          done
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
@@ -55,3 +63,41 @@ jobs:
           pnpm check
           pnpm test
           pnpm build
+
+      - name: Install browser and Korean fonts
+        working-directory: frontend
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          sudo apt-get install -y fonts-noto-cjk
+
+      - name: Test browser flows with mock data
+        working-directory: frontend
+        run: pnpm test:e2e
+
+      - name: Upload browser report and failure traces
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: browser-results
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  container:
+    name: Container (${{ matrix.runner }})
+    needs: checks
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Build and test production container
+        run: ./scripts/test-container.sh

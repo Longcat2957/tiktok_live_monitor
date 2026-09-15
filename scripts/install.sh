@@ -31,12 +31,8 @@ if ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/
 fi
 if [[ ! -f .env ]]; then
   cp .env.example .env
-  echo '.env를 생성했습니다. TIKTOK_USERNAME을 수정하거나 COMMENT_SOURCE=mock으로 바꾼 뒤 다시 실행하세요.'
+  echo '.env를 생성했습니다. 실제 방송은 COMMENT_SOURCE=tiktok, 데모는 mock으로 설정한 뒤 다시 실행하세요.'
   exit 0
-fi
-if grep -Eq '^COMMENT_SOURCE=tiktok[[:space:]]*$' .env && grep -Eq '^TIKTOK_USERNAME=@?example_account[[:space:]]*$' .env; then
-  echo '.env의 예제 계정을 실제 TikTok 계정으로 수정하세요.' >&2
-  exit 1
 fi
 sudo systemctl enable --now docker
 if ! docker info >/dev/null 2>&1; then

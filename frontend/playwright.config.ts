@@ -3,6 +3,8 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
+  forbidOnly: Boolean(process.env.CI),
+  reporter: process.env.CI ? [['line'], ['html', { open: 'never' }]] : 'list',
   workers: 1,
   timeout: 45000,
   use: {
@@ -11,6 +13,7 @@ export default defineConfig({
     headless: true,
     launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
       ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH } : {},
-    screenshot: 'only-on-failure'
+    screenshot: 'only-on-failure',
+    trace: process.env.CI ? 'retain-on-failure' : 'off'
   }
 });

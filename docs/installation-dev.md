@@ -58,7 +58,7 @@ test -f .env || cp .env.example .env
 COMMENT_SOURCE=mock
 ```
 
-mock 모드는 계정이나 진행 중인 방송 없이 댓글을 생성합니다. `.env`는 Git에서 제외되며, 실행 시 셸 환경변수가 `.env`보다 우선합니다.
+`COMMENT_SOURCE`는 첫 화면의 초기 선택값입니다. mock 모드도 화면에서 시작 버튼을 눌러야 댓글을 생성하며, 계정이나 진행 중인 방송은 필요하지 않습니다. `.env`는 Git에서 제외되며, 실행 시 셸 환경변수가 `.env`보다 우선합니다.
 
 ## 3. 의존성 설치
 
@@ -88,11 +88,11 @@ cd ~/tiktok_live_monitor
 2. 백엔드를 `127.0.0.1:8000`에서 자동 reload로, 프론트엔드를 `127.0.0.1:5173`에서 Vite 개발 모드로 실행합니다.
 3. 서버 응답과 Vite의 백엔드 proxy 응답을 확인한 뒤 Chromium으로 `http://127.0.0.1:5173`을 엽니다.
 
-기본값은 **mock**이며 `.env`의 `COMMENT_SOURCE`보다 우선합니다. 가짜 댓글이 계속 나타납니다. `.env`가 없어도 기본 설정으로 실행됩니다. 스크립트는 어느 디렉터리에서든 절대 경로로 호출할 수 있습니다.
+기본값은 **mock**이며 `.env`의 `COMMENT_SOURCE`보다 우선합니다. 첫 화면에서 **데모 체험 → 시작**을 누르면 가짜 댓글이 나타납니다. `.env`가 없어도 기본 설정으로 실행됩니다. 스크립트는 어느 디렉터리에서든 절대 경로로 호출할 수 있습니다.
 
 로그는 실행한 터미널에 표시됩니다. **`Ctrl+C`를 누르면 두 서버와 전용 Chromium을 함께 종료**합니다. Chromium은 임시 프로필을 사용하며 정상 종료 시 삭제합니다. 브라우저 창만 닫으면 서버는 계속 실행됩니다. 개발용 일반 창이므로 개발자 도구도 사용할 수 있습니다.
 
-실제 방송을 연결하려면 계정을 `.env`에 설정하고 명시적으로 실행합니다.
+실제 방송을 초기 선택값으로 열려면 다음과 같이 실행한 뒤 첫 화면에서 @아이디를 입력하고 **시작**을 누릅니다.
 
 ```bash
 COMMENT_SOURCE=tiktok ./scripts/dev.sh
@@ -123,7 +123,7 @@ cd ~/tiktok_live_monitor/frontend
 pnpm dev --host 127.0.0.1
 ```
 
-브라우저에서 Vite가 출력한 주소(기본 `http://127.0.0.1:5173`)를 엽니다. 댓글이 계속 추가되고 연결 상태가 표시되면 정상입니다. `/ws`, `/health`, `/config`는 Vite가 백엔드로 전달합니다. 종료는 각 터미널에서 `Ctrl+C`입니다.
+브라우저에서 Vite가 출력한 주소(기본 `http://127.0.0.1:5173`)를 엽니다. **데모 체험 → 시작**을 누르면 댓글이 계속 추가되고 연결 상태가 표시됩니다. `/ws`, `/health`, `/config`, `/account`, `/refresh`는 Vite가 백엔드로 전달합니다. 종료는 각 터미널에서 `Ctrl+C`입니다.
 
 ```bash
 curl --fail http://127.0.0.1:8000/health
@@ -133,19 +133,20 @@ curl --fail http://127.0.0.1:8000/health
 
 ## 5. 검사와 빌드
 
-저장소의 최소 CI와 같은 검사입니다.
+CI의 코드 검사와 같은 명령입니다. 이어서 브라우저 E2E와 운영 컨테이너 검사도 실행합니다.
 
 ```bash
 cd ~/tiktok_live_monitor/backend
 uv run --locked pytest -q
 uv run --locked mypy
+uv run --locked ruff check app tests
 cd ../frontend
 pnpm check
 pnpm test
 pnpm build
 ```
 
-브라우저 E2E까지 확인하려면 위 빌드 후 실행합니다. Linux에서는 Playwright가 지원하는 배포판에서 `--with-deps`로 시스템 의존성도 설치할 수 있습니다.
+CI와 같이 브라우저 E2E를 확인하려면 위 빌드 후 실행합니다. Linux에서는 Playwright가 지원하는 배포판에서 `--with-deps`로 시스템 의존성도 설치할 수 있습니다.
 
 ```bash
 cd ~/tiktok_live_monitor/frontend
@@ -153,7 +154,9 @@ pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
-E2E는 포트 `18765`에 별도의 mock 백엔드를 실행하고 종료하므로 해당 포트를 비워두세요. 정적 빌드는 `frontend/build`에 생성됩니다. 빌드 후 개발 백엔드를 재시작하면 `http://127.0.0.1:8000`에서도 UI를 확인할 수 있습니다.
+E2E는 `18765`, `18768`에 별도 mock 백엔드, `18766`에 Vite 프록시를 실행하고 종료하므로 해당 포트를 비워두세요. 정적 빌드는 `frontend/build`에 생성됩니다. 빌드 후 개발 백엔드를 재시작하면 `http://127.0.0.1:8000`에서도 UI를 확인할 수 있습니다.
+
+Docker가 설치되어 있다면 저장소 루트에서 `./scripts/test-container.sh`로 운영 이미지 빌드·실행까지 확인합니다. Compose 2.24.4 이상과 curl이 필요하며 임시 localhost 포트·별도 프로젝트를 사용합니다. 이 검사는 `.env`나 실행 중인 모니터를 변경하지 않습니다. CI는 AMD64와 ARM64에서 각각 실행합니다.
 
 ## 6. 소스 업데이트
 
@@ -168,4 +171,4 @@ cd ../frontend
 pnpm install --frozen-lockfile
 ```
 
-실제 방송을 시험하려면 `.env`의 `COMMENT_SOURCE=tiktok`, `TIKTOK_USERNAME=@실제계정아이디`를 설정하고, 백엔드 실행 명령에서 `COMMENT_SOURCE=mock`을 제거합니다. 실제 장비 설치는 [배포 환경 설치 가이드](installation-deploy.md)를 참고하세요.
+실제 방송을 시험하려면 화면에서 **모니터 종료 · 처음으로 → 실제 방송**을 선택한 뒤 @아이디 또는 TikTok 프로필·LIVE 주소를 입력하고 시작합니다. `.env` 수정이나 서버 재시작은 필요하지 않습니다. 실제 장비 설치는 [배포 환경 설치 가이드](installation-deploy.md)를 참고하세요.

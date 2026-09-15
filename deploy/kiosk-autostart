@@ -1,0 +1,5 @@
+# Manual labwc autostart snippet for a checkout at ~/tiktok_live_monitor.
+# install.sh instead writes the actual checkout path and backs up existing config.
+# Preserve /etc/xdg/labwc/autostart when creating a new user autostart.
+mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/tiktok-live-monitor"
+/bin/bash "${TIKTOK_MONITOR_ROOT:-$HOME/tiktok_live_monitor}/deploy/wait-for-app.sh" >>"${XDG_STATE_HOME:-$HOME/.local/state}/tiktok-live-monitor/kiosk.log" 2>&1 &

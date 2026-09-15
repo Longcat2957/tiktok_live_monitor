@@ -1,0 +1,27 @@
+:root { font-family: 'Noto Sans CJK KR', 'Noto Sans KR', system-ui, sans-serif; color: #f5f6f7; background: #090b0e; font-synthesis: none; color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+body { cursor: none; }
+main { height: 100dvh; display: flex; flex-direction: column; padding: clamp(20px, 4vw, 48px); gap: 20px; }
+header { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; padding-bottom: 16px; border-bottom: 1px solid #272b31; }
+.wordmark { font-size: clamp(14px, 1.8vw, 22px); font-weight: 750; letter-spacing: .12em; }
+.wordmark span { color: #9099a5; font-weight: 450; margin-left: 10px; }
+.portrait-mark { color: #5ce1c4; font-size: 10px; }
+.comment-viewport { flex: 1; min-height: 0; overflow: auto; scrollbar-width: none; overflow-anchor: none; }
+.comment-viewport::-webkit-scrollbar { display: none; }
+.comment-list { display: flex; flex-direction: column; justify-content: flex-end; min-height: 100%; }
+.comment { flex-shrink: 0; padding: clamp(18px, 2.7vw, 34px) 0; border-bottom: 1px solid #252a30; min-width: 0; }
+.comment:last-child { border-bottom: 0; padding-bottom: 8px; }
+.nickname { margin: 0 0 10px; font-size: clamp(17px, 2.4vw, 27px); color: #a5b0bd; line-height: 1.4; overflow-wrap: anywhere; }
+.body { margin: 0; font-size: clamp(28px, 4.4vw, 52px); font-weight: 550; line-height: 1.45; letter-spacing: -.025em; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
+footer { flex-shrink: 0; border-top: 1px solid #272b31; padding-top: 16px; }
+.connection { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: clamp(12px, 1.7vw, 20px); color: #a5b0bd; overflow-wrap: anywhere; }
+.status-dot { width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: #edbe62; }
+.connection[data-state='connected'] .status-dot { background: #68d6a6; }
+.connection[data-state='disconnected'] .status-dot, .connection[data-state='error'] .status-dot { background: #ff7d86; }
+.server-label { margin-left: auto; font-size: .85em; color: #8a95a3; }
+.empty { position: absolute; top: 43%; left: clamp(20px, 4vw, 48px); right: clamp(20px, 4vw, 48px); transform: translateY(-50%); }
+.empty-label { color: #68d6a6; font-size: clamp(16px, 2.3vw, 25px); }
+h1 { font-size: clamp(30px, 5.7vw, 64px); line-height: 1.35; letter-spacing: -.04em; font-weight: 550; }
+.empty p { font-size: clamp(16px, 2.2vw, 25px); color: #a5b0bd; line-height: 1.6; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }

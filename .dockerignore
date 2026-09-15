@@ -1,0 +1,14 @@
+.git
+.agents
+.codex
+.env
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/node_modules
+**/.svelte-kit
+**/build
+**/test-results
+**/playwright-report

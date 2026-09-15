@@ -1,6 +1,6 @@
 # 개발 환경 설치 가이드
 
-Linux/macOS의 Bash 기준입니다. Windows에서는 WSL2 안에서 같은 절차를 사용하세요. 백엔드와 프론트엔드를 각각 실행하며 Docker나 TikTok 인증 정보는 필요하지 않습니다.
+통합 실행 스크립트는 Linux 데스크톱의 Bash 기준입니다. macOS에서는 아래 수동 실행 절차를 사용하세요. WSL2/SSH처럼 그래픽 환경이 없는 경우 서버만 실행할 수 있습니다. Docker나 TikTok 인증 정보는 필요하지 않습니다.
 
 ## 1. 개발 도구 설치
 
@@ -72,6 +72,42 @@ pnpm install --frozen-lockfile
 `backend/.venv`는 uv가 관리합니다. 별도로 가상환경을 활성화할 필요는 없습니다. 설치가 lockfile 불일치로 실패하면 오류를 확인하고, 단순 설치 목적으로 lockfile을 삭제하거나 재생성하지 마세요.
 
 ## 4. 개발 서버 실행
+
+### 한 번에 실행 + Chromium 자동 열기
+
+Linux 데스크톱 터미널에서 실행합니다. `uv`, `pnpm`, Node.js 외에 `curl`, `setsid`(util-linux), Chromium이 필요합니다. Raspberry Pi OS/Debian에서 Chromium이 없다면 `sudo apt install chromium`으로 설치하세요.
+
+```bash
+cd ~/tiktok_live_monitor
+./scripts/dev.sh
+```
+
+스크립트는 다음 순서로 실행합니다.
+
+1. `uv sync --locked`, `pnpm install --frozen-lockfile`로 의존성을 준비합니다. 최초 실행에는 네트워크가 필요할 수 있습니다.
+2. 백엔드를 `127.0.0.1:8000`에서 자동 reload로, 프론트엔드를 `127.0.0.1:5173`에서 Vite 개발 모드로 실행합니다.
+3. 서버 응답과 Vite의 백엔드 proxy 응답을 확인한 뒤 Chromium으로 `http://127.0.0.1:5173`을 엽니다.
+
+기본값은 **mock**이며 `.env`의 `COMMENT_SOURCE`보다 우선합니다. 가짜 댓글이 계속 나타납니다. `.env`가 없어도 기본 설정으로 실행됩니다. 스크립트는 어느 디렉터리에서든 절대 경로로 호출할 수 있습니다.
+
+로그는 실행한 터미널에 표시됩니다. **`Ctrl+C`를 누르면 두 서버와 전용 Chromium을 함께 종료**합니다. Chromium은 임시 프로필을 사용하며 정상 종료 시 삭제합니다. 브라우저 창만 닫으면 서버는 계속 실행됩니다. 개발용 일반 창이므로 개발자 도구도 사용할 수 있습니다.
+
+실제 방송을 연결하려면 계정을 `.env`에 설정하고 명시적으로 실행합니다.
+
+```bash
+COMMENT_SOURCE=tiktok ./scripts/dev.sh
+```
+
+Chromium 경로를 직접 지정하거나 브라우저 없이 실행할 수도 있습니다.
+
+```bash
+CHROMIUM_BIN=/usr/bin/chromium ./scripts/dev.sh
+DEV_OPEN_BROWSER=0 ./scripts/dev.sh
+```
+
+서버만 실행한 경우 브라우저에서 `http://127.0.0.1:5173`을 직접 여세요. 원격 SSH에서는 localhost 포트 전달이 필요합니다. 포트 8000 또는 5173이 이미 사용 중이면 스크립트는 중단합니다. 기존 개발 서버를 종료한 뒤 다시 실행하세요. 서버가 종료되거나 준비에 60초 넘게 걸리면 함께 실행한 프로세스를 정리합니다.
+
+### 터미널을 나누어 수동 실행
 
 터미널 1 — 백엔드:
 

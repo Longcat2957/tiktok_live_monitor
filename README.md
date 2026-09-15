@@ -44,6 +44,14 @@ docker compose up -d --build --wait
 
 ## 개발
 
+Linux 데스크톱에서 개발 도구와 Chromium을 설치한 뒤 아래 한 명령으로 백엔드, 프론트엔드, Chromium을 함께 실행할 수 있습니다.
+
+```bash
+./scripts/dev.sh
+```
+
+의존성 설치 후 mock 모드로 `http://127.0.0.1:5173`을 자동으로 엽니다. 종료는 `Ctrl+C`입니다. 브라우저 없이 실행하려면 `DEV_OPEN_BROWSER=0 ./scripts/dev.sh`를 사용하세요. 실제 방송 연결과 옵션은 [개발 서버 실행 가이드](docs/installation-dev.md#4-개발-서버-실행)를 참고하세요.
+
 Python 3.11 이상, uv, Node.js 22.20 이상(22 계열 권장), pnpm 10.20.0이 필요합니다. 버전은 `backend/uv.lock`, `frontend/pnpm-lock.yaml`로 고정합니다. 주요 검증 버전: TikTokLive 7.0.1, FastAPI 0.141.1, Svelte 5.57.0, SvelteKit 2.70.3, TypeScript 6.0.3. TypeScript 7은 현재 SvelteKit peer 지원 범위 밖이라 사용하지 않습니다.
 
 도구가 없다면 먼저 [개발 도구 설치](docs/installation-dev.md#1-개발-도구-설치)를 진행하세요. 아래 명령은 도구 설치 후 저장소 루트에서 시작합니다.

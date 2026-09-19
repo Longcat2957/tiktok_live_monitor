@@ -316,6 +316,7 @@ API 및 WebSocket route를 등록한 뒤 마지막에 정적 파일을 `/`에 mo
 - SSR이 필요 없는 kiosk UI이므로 정적 prerender가 가능하도록 구성한다.
 - WebSocket 객체는 브라우저에서만 생성한다.
 - 운영 WebSocket URL은 `window.location`을 기준으로 `ws:` 또는 `wss:`를 자동 선택한다.
+- 운영 UI는 SvelteKit 기본 버전 확인을 30초 간격으로 사용하고 새 빌드를 감지한 경우에만 페이지를 다시 불러온다. 동일 버전·네트워크 실패에는 새로고침하지 않는다. 구버전 화면의 최초 수동 새로고침을 배포 문서에 안내한다.
 - 개발 환경은 Vite proxy 또는 공개 환경변수로 backend 주소를 정한다. 코드에 `localhost:8000`을 여러 군데 하드코딩하지 않는다.
 
 ### 8.2 WebSocket 재연결

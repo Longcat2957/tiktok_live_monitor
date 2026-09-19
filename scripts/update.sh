@@ -33,7 +33,7 @@ main() {
   fi
   docker compose version >/dev/null
   docker info >/dev/null
-  local previous previous_image current_image
+  local previous previous_image current_image previous_tags
   previous="$(git rev-parse --short HEAD)"
   git pull --ff-only
   echo "배포: $previous → $(git rev-parse --short HEAD)"
@@ -46,7 +46,7 @@ main() {
   # Also handle the previously deployed image from before we added the image label.
   current_image="$(docker compose images -q app)" || current_image=""
   if [[ -n "$previous_image" && -n "$current_image" && "$previous_image" != "$current_image" ]]; then
-    if [[ "$(docker image inspect --format '{{len .RepoTags}}' "$previous_image")" == 0 ]]; then
+    if previous_tags="$(docker image inspect --format '{{len .RepoTags}}' "$previous_image" 2>/dev/null)" && [[ "$previous_tags" == 0 ]]; then
       docker image rm "$previous_image" || echo '이전 이미지 정리 실패. 사용 중인 이미지는 유지합니다.' >&2
     fi
   fi
@@ -56,6 +56,7 @@ main() {
   # Build cache is shared with other projects; report it without a global prune.
   docker system df || echo 'Docker 디스크 사용량을 조회하지 못했습니다.' >&2
   echo '업데이트 완료. 컨테이너가 교체되었다면 화면에서 방송·데모를 선택하고 다시 시작하세요.'
+  echo '화면이 이전 UI라면 Chromium에서 Ctrl+Shift+R로 새로고침하세요. 새 버전 감지 기능이 로드된 이후에는 자동 갱신됩니다.'
 }
 
 main "$@"

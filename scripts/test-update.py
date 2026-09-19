@@ -133,6 +133,8 @@ def main():
             env["UPDATE_TEST_PREVIOUS_IMAGE"] = previous
             assert not any(command.startswith("image rm") for command in update(True))
         del env["UPDATE_TEST_PREVIOUS_IMAGE"]
+        env["UPDATE_TEST_FAIL"] = "image inspect --format {{len .RepoTags}} sha256:old"
+        assert not any(command.startswith("image rm") for command in update(True))
         for failure in (
             "image rm sha256:old",  # Docker refuses if another container still uses it.
             "image prune --force --filter label=org.opencontainers.image.title=tiktok-live-monitor",

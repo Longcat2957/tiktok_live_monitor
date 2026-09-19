@@ -1074,3 +1074,41 @@ test('reading mode preserves its anchor, bounds unread items and resets across q
     await expect(controls).toHaveCount(0);
     await expect.poll(bottomGap).toBeLessThanOrEqual(1);
 });
+
+test('a new UI build reloads the open page, but a failed or unchanged version check does not', async ({
+    page,
+    request,
+}) => {
+    await startMock(request);
+    const { version } = await (await request.get('/_app/version.json')).json();
+    const session = (await (await request.get('/health')).json()).source.session_id;
+    let checks = 0;
+    let navigations = 0;
+    page.on('request', (request) => {
+        if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations++;
+    });
+    await page.route('**/_app/version.json', (route) => {
+        checks++;
+        expect(route.request().headers()['cache-control']).toBe('no-cache');
+        return checks === 1
+            ? route.fulfill({ status: 503, body: '' })
+            : route.fulfill({ json: { version: checks === 3 ? 'new-ui-build' : version } });
+    });
+    await page.clock.install();
+    await page.goto('/');
+    await expect(page.locator('.comment').first()).toBeVisible();
+    for (const check of [1, 2]) {
+        await page.clock.runFor(30_100);
+        await expect.poll(() => checks).toBe(check);
+        expect(navigations).toBe(1);
+    }
+    const reloaded = page.waitForEvent('load');
+    await page.clock.runFor(30_100);
+    await expect.poll(() => navigations).toBe(2);
+    await reloaded;
+    await expect(page.locator('.comment').first()).toBeVisible();
+    expect((await (await request.get('/health')).json()).source.session_id).toBe(session);
+    await page.clock.runFor(30_100);
+    await expect.poll(() => checks).toBe(4);
+    expect(navigations).toBe(2);
+});

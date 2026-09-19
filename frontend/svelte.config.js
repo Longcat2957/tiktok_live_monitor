@@ -6,6 +6,7 @@ const config = {
     preprocess: vitePreprocess(),
     kit: {
         adapter: adapter(),
+        version: { pollInterval: 30_000 },
         typescript: {
             config(config) {
                 config.include.push(

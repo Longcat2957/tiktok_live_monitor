@@ -31,7 +31,7 @@ if ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/
 fi
 if [[ ! -f .env ]]; then
   cp .env.example .env
-  echo '.env를 생성했습니다. 실제 방송은 COMMENT_SOURCE=tiktok, 데모는 mock으로 설정한 뒤 다시 실행하세요.'
+  echo '.env를 생성했습니다. 기본 설정으로 사용하거나 필요한 값을 수정한 뒤 다시 실행하세요. 방송·데모는 화면에서 선택합니다.'
   exit 0
 fi
 sudo systemctl enable --now docker

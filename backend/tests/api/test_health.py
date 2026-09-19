@@ -54,7 +54,6 @@ def test_health_static_and_config(tmp_path: Path):
     [
         {"comment_queue_size": 0},
         {"comment_history_size": 0},
-        {"comment_source": "invalid"},
         {"log_level": "invalid"},
         {"tiktok_reconnect_min_seconds": 40, "tiktok_reconnect_max_seconds": 2},
     ],
@@ -116,7 +115,7 @@ def test_monitor_dependency_override_is_shared_by_http_and_websocket():
 
 
 def test_settings_validation_is_422_but_internal_validation_error_is_500():
-    app = create_app(Settings(_env_file=None, comment_source="mock"))
+    app = create_app(Settings(_env_file=None))
     with TestClient(app, base_url="http://localhost", raise_server_exceptions=False) as client:
         sid = client.get("/config").json()["session_id"]
         started = client.post("/account", json={"session_id": sid, "source": "mock"})

@@ -15,7 +15,6 @@ services:
     ports: !override
       - "127.0.0.1::8000"
     environment:
-      COMMENT_SOURCE: mock
       MOCK_INTERVAL_SECONDS: "0.03"
       LOG_LEVEL: INFO
 YAML
@@ -83,7 +82,8 @@ async def main():
     async with httpx.AsyncClient(base_url=BASE, headers={"Origin": BASE}, timeout=5) as client:
         health = await client.get("/health")
         assert health.status_code == 200, "Idle server must be healthy"
-        assert health.json()["source"]["state"] == "idle", "Mock must await an explicit start"
+        assert health.json()["source"]["state"] == "idle", "Server must await an explicit start"
+        assert health.json()["source"]["source"] == "tiktok"
         assert health.json()["pending_commands"] == 0, "Unexpected command at startup"
         initial = (await client.get("/config")).json()
         assert initial["session_id"] == health.json()["source"]["session_id"]

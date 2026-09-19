@@ -1,0 +1,9 @@
+{
+    "tabWidth": 4,
+    "useTabs": false,
+    "singleQuote": true,
+    "printWidth": 100,
+    "plugins": ["prettier-plugin-svelte"],
+    "svelteIndentScriptAndStyle": true,
+    "overrides": [{ "files": "*.svelte", "options": { "parser": "svelte" } }]
+}

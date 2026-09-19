@@ -119,19 +119,37 @@ Chromium kiosk
 tiktok-live-monitor/
 ├── backend/
 │   ├── app/
-│   │   ├── __init__.py
-│   │   ├── main.py
+│   │   ├── main.py                 # 앱 조립과 lifespan
+│   │   ├── __main__.py             # 서버 실행
 │   │   ├── config.py
-│   │   ├── models.py
-│   │   ├── websocket.py
-│   │   └── sources/
-│   │       ├── __init__.py
-│   │       ├── base.py
-│   │       ├── tiktok.py
-│   │       └── mock.py
+│   │   ├── api/
+│   │   │   ├── dependencies.py
+│   │   │   ├── security.py
+│   │   │   ├── exception_handlers.py
+│   │   │   └── routers/
+│   │   │       ├── monitor.py
+│   │   │       ├── settings.py
+│   │   │       ├── health.py
+│   │   │       └── websocket.py
+│   │   ├── schemas/
+│   │   │   ├── monitor.py
+│   │   │   ├── settings.py
+│   │   │   ├── health.py
+│   │   │   └── events.py
+│   │   ├── services/
+│   │   │   ├── monitor.py
+│   │   │   ├── demo.py
+│   │   │   ├── event_sink.py
+│   │   │   └── errors.py
+│   │   ├── integrations/
+│   │   │   └── tiktok.py
+│   │   └── realtime/
+│   │       └── broadcaster.py
 │   ├── tests/
-│   │   ├── test_health.py
-│   │   └── test_websocket.py
+│   │   ├── api/
+│   │   ├── services/
+│   │   ├── integrations/
+│   │   └── realtime/
 │   ├── pyproject.toml
 │   ├── uv.lock
 │   └── .python-version
@@ -140,7 +158,15 @@ tiktok-live-monitor/
 │   │   ├── app.html
 │   │   ├── app.css
 │   │   ├── lib/
+│   │   │   ├── monitor/
+│   │   │   │   ├── session.svelte.ts
+│   │   │   │   └── commands.svelte.ts
 │   │   │   ├── components/
+│   │   │   │   ├── MonitorHeader.svelte
+│   │   │   │   ├── AccountSetup.svelte
+│   │   │   │   ├── LiveSummary.svelte
+│   │   │   │   ├── RequestFeedback.svelte
+│   │   │   │   ├── SettingsDialog.svelte
 │   │   │   │   ├── CommentItem.svelte
 │   │   │   │   ├── CommentList.svelte
 │   │   │   │   └── ConnectionStatus.svelte
@@ -172,14 +198,21 @@ tiktok-live-monitor/
 └── README.md
 ```
 
-구현 도중 더 좋은 이유가 있으면 작은 구조 변경은 가능하지만, 백엔드·프론트엔드·배포 파일의 책임은 명확히 분리한다.
+Python 패키지별 `__init__.py`는 위 목록에서 생략했다. 백엔드·프론트엔드·배포 파일의 책임을 분리한다.
+
+- `main.py`는 앱 생성, lifespan, 보안·예외 처리·라우터 등록과 정적 파일 연결을 담당한다.
+- HTTP·WebSocket 라우터는 공통 `get_monitor` 의존성으로 `MonitorService`를 받는다. HTTP 라우터는 내부 큐·작업 집합을 직접 조회하지 않는다.
+- `MonitorService`의 시작·종료·재연결·설정 변경은 명시적인 공개 메서드로 제공하며 내부의 단일 직렬 전환 경로를 공유한다. 상태·설정 조회는 명시적 응답 모델을 반환한다.
+- TikTokLive API는 `integrations/tiktok.py`에 격리한다. `services/demo.py`는 같은 앱 이벤트 계약으로 데모를 생성하고, `EventSink`는 이전 세션의 늦은 이벤트를 차단한다.
+- `realtime/broadcaster.py`는 브라우저별 송신 큐와 느린 연결 격리를 담당한다.
+- 잘못된 런타임 설정은 서비스의 `InvalidSettingsError`를 통해 422로 변환한다. 내부 Pydantic 오류를 일괄적으로 사용자 입력 오류로 처리하지 않는다.
+- API 경로·JSON·WebSocket 계약과 `app.main:app`, `python -m app` 실행 방식은 유지한다.
 
 ## 6. 환경 설정
 
 루트 `.env.example`에 최소한 다음 값을 둔다.
 
 ```dotenv
-COMMENT_SOURCE=tiktok
 COMMENT_QUEUE_SIZE=500
 COMMENT_HISTORY_SIZE=30
 TIKTOK_RECONNECT_MIN_SECONDS=2
@@ -192,7 +225,7 @@ PORT=8000
 규칙:
 
 - `.env`는 Git에 포함하지 않는다.
-- `COMMENT_SOURCE`는 첫 화면의 초기 선택값이다. 사용자가 mock을 선택하고 시작하면 TikTok 연결 없이 가짜 댓글을 주기적으로 생성한다.
+- 모드·계정은 화면에서만 선택한다. 서버는 항상 idle로 시작하고 첫 화면에는 실제 방송이 선택된다. 사용자가 데모를 선택하고 시작하면 TikTok 연결 없이 가짜 댓글을 주기적으로 생성한다. 모드별 환경변수나 별도 서버는 없다.
 - 누락되거나 잘못된 환경값은 조용히 무시하지 말고 시작 시 이해 가능한 오류를 출력한다.
 - TikTok 계정은 화면에서 입력한다. `POST /account`는 @아이디 또는 TikTok 프로필·LIVE 주소를 검증해 아이디로 정규화한다. 기존 `TIKTOK_USERNAME` 환경변수는 사용하지 않는다.
 - 컨테이너 내부에서는 `0.0.0.0:8000`에 bind하고, 외부 노출 범위는 Compose port mapping `127.0.0.1:8000:8000`으로 제한한다.
@@ -346,7 +379,7 @@ CSS `transform: rotate(90deg)`로 페이지를 회전하지 않는다. Raspberry
 
 - Backend: `uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`
 - Frontend: `pnpm dev`
-- `COMMENT_SOURCE=mock`으로 실제 TikTok 방송 없이 전체 흐름을 시험할 수 있어야 한다.
+- 화면에서 데모 체험을 선택해 실제 TikTok 방송 없이 전체 흐름을 시험할 수 있어야 한다. 개발 실행과 운영 Docker 실행 모두 두 데이터 모드를 지원한다.
 
 ### 운영 빌드
 
@@ -394,6 +427,10 @@ CSS `transform: rotate(90deg)`로 페이지를 회전하지 않는다. Raspberry
 
 Docker daemon 자체는 OS 부팅 시 시작되도록 `sudo systemctl enable --now docker`를 사용한다. Compose의 restart policy가 생성된 컨테이너를 복구하므로 애플리케이션용 systemd unit을 별도로 중복 생성하지 않는다.
 
+### 업데이트 스크립트
+
+`scripts/update.sh`는 현재 브랜치의 upstream에서 `git pull --ff-only` 후 이미지 빌드와 Compose 교체, 최대 120초 healthy 대기를 수행한다. 미커밋 변경·추적하지 않는 파일, `.env` 누락, upstream 미설정 또는 분기된 Git 이력은 중단한다. `.env`는 보존하고 자동 stash/reset/merge는 하지 않는다. 빌드 실패 시 기존 컨테이너를 유지하며 교체 후 자동 롤백은 구현하지 않는다. 방송 종료 후 실행하고 CI 통과 여부는 운영자가 먼저 확인한다. `python3 scripts/test-update.py`는 로컬 임시 Git 저장소와 가짜 Docker로 업데이트·중단 경로를 검사한다.
+
 ### Chromium kiosk
 
 Raspberry Pi OS Desktop의 labwc autostart를 기준으로 한다. 제공할 실행 항목에는 최소한 다음 의도가 반영되어야 한다.
@@ -416,7 +453,7 @@ chromium http://127.0.0.1:8000
 - 지원 OS와 필수 명령 확인
 - Docker Engine, Docker Compose plugin, Chromium 존재 확인
 - 현재 사용자가 Docker를 실행할 권한이 있는지 확인하고 필요한 설정 안내
-- `.env`가 없을 때 `.env.example` 복사 후 사용자에게 수정 필요 안내
+- `.env`가 없을 때 `.env.example` 복사 후 기본값 사용 또는 설정 수정 안내
 - Docker daemon enable/start
 - `docker compose build`와 `docker compose up -d` 실행
 - labwc autostart 설치 또는 설치 명령 안내
@@ -469,7 +506,7 @@ chromium http://127.0.0.1:8000
 
 - 저장소의 모든 필수 파일에 실제 구현이 들어 있다.
 - placeholder, TODO-only 파일, 동작하지 않는 의사 코드를 남기지 않는다.
-- `.env.example`만 수정하면 TikTok 계정을 바꿀 수 있다.
+- 화면에서 모니터를 종료한 뒤 실제 방송을 선택하고 TikTok 계정을 바꿀 수 있다.
 - mock 모드로 end-to-end 데모가 된다.
 - backend 테스트가 통과한다.
 - frontend check와 production build가 통과한다.
@@ -544,7 +581,7 @@ MVP 검증 이후에만 다음을 고려한다.
 - 전환 요청은 순차 처리하며 이전 source 종료 후 큐를 비우고 새 source를 시작한다.
 - status의 `session_id`, `username`으로 모든 브라우저에 선택 계정과 전환 경계를 전달한다. 새 세션에서는 댓글을 비운다.
 - 계정은 메모리에만 보관한다. 새로고침에는 유지되고 백엔드 재시작에는 초기화된다. 댓글 영구 저장은 없다.
-- `COMMENT_SOURCE`는 첫 화면의 초기 선택값이다. mock도 시작 버튼을 눌러야 실행한다. 실행 중 mock과 TikTok 사이 전환을 허용한다.
+- 모드 선택 환경변수는 사용하지 않는다. mock도 시작 버튼을 눌러야 실행한다. 모드 변경은 모니터를 종료한 뒤 첫 화면에서 한다.
 - API는 same-origin 사용과 localhost 배포를 유지한다.
 
 ## UI 디자인 시스템 변경
@@ -558,7 +595,7 @@ MVP 검증 이후에만 다음을 고려한다.
 
 - 모드·계정 변경과 강제 초기화는 M3 아이콘 버튼으로 표시한다. 접근 가능한 이름과 hover/focus 설명을 제공하고 Escape로 설명을 닫을 수 있다.
 - `DELETE /account`는 계정 전환과 같은 잠금·취소·큐 정리 경로를 사용해 수신을 중지한다.
-- 초기화 시 새 세션의 idle 상태를 모든 브라우저에 전달해 댓글과 계정을 비우고 첫 화면으로 돌아간다. 초기 모드는 COMMENT_SOURCE를 사용한다.
+- 초기화 시 새 세션의 idle 상태를 모든 브라우저에 전달해 댓글과 계정을 비우고 첫 화면으로 돌아간다. 첫 화면에는 실제 방송이 선택되며 시작 전에는 연결하지 않는다.
 - 초기화 실패는 화면에 표시하며 성공 응답 전에 댓글을 임의로 지우지 않는다.
 
 ## 런타임 설정 모달
@@ -577,10 +614,10 @@ MVP 검증 이후에만 다음을 고려한다.
 
 
 ## 백엔드 안정화
-- 단일 Monitor가 세션 전환과 수신/소비/감시 태스크를 소유한다. 구체적인 계획·검증 기준은 docs/backend-rebuild-plan.md를 따른다.
+- 단일 MonitorService가 세션 전환과 수신/소비/감시 태스크를 소유한다. 검증 결과와 남은 외부 검증은 `VALIDATION.md`를 참고한다.
 - 시작은 idle에서만 허용한다. 재연결은 POST /refresh, 설정 변경은 PATCH /config, 종료는 DELETE /account로 구분한다.
 - 현재 session_id와 불일치한 요청은 상태를 변경하지 않고 409를 반환한다.
-- 이전 수신 시도의 늦은 이벤트는 SourceSink에서 차단한다. 종료를 거부하는 작업이 남으면 새 연결을 시작하지 않는다.
+- 이전 수신 시도의 늦은 이벤트는 EventSink에서 차단한다. 종료를 거부하는 작업이 남으면 새 연결을 시작하지 않는다.
 - HTTP Host와 변경 요청 Origin, WS Origin을 검사한다. WS Origin은 필수다.
 - 순간 배치에서도 송신 기회를 보장한다. 실제 지연/큐 초과인 브라우저만 독립적으로 닫는다.
 - 내부 작업 장애는 health 503과 오류 상태로 알리고 자동 재시도한다. 종료 시간 초과는 명시적 서버 재시작 대상이다.
@@ -590,10 +627,18 @@ MVP 검증 이후에만 다음을 고려한다.
 
 ## 프론트엔드 읽기·복구 개선 (2026-09-15)
 
-- 구현 계획과 검증 결과는 `docs/frontend-improvement-plan.md`를 따른다.
+- 검증 결과와 성능 측정은 `VALIDATION.md`를 참고한다.
 - 댓글과 활동은 보관 수를 공유한다. 손상된 선택적 사진·배지는 제거하고 유효한 댓글을 유지한다.
 - 위로 이동하면 읽던 항목의 위치를 보존하며 최신 이동 버튼과 키보드 조작을 제공한다. 보관 상한은 읽는 동안에도 유지한다.
 - 첫 화면에서도 테마를 바꿀 수 있다. 테마와 20–200%/5% 단위 글자 배율만 브라우저에 저장한다.
 - 설정은 기본과 고급 항목으로 나누고 모드·아이디는 첫 화면에서만 바꾼다.
 - HTTP 변경 응답이 불확실하면 상태 조회로 확인한다. 댓글 목록의 세션 경계는 WebSocket만 적용한다.
 - 수신 댓글은 프레임마다 묶어 반영하고, 숨겨진 탭의 대기 배치도 보관 수 이내로 제한한다. 새 세션에서는 대기 배치를 지운다.
+
+## 프론트엔드 책임 분리
+
+- `+page.svelte`는 화면 조립, 설정창 열림·글자 배율, 시작·종료 후 포커스 전환만 담당한다. 폼의 입력 초안과 오류는 `AccountSetup`, 설정 초안은 `SettingsDialog`가 소유한다.
+- `MonitorHeader`, `LiveSummary`, `RequestFeedback`은 필요한 값과 콜백을 받는다. 페이지가 자식 DOM을 전역 검색하지 않으며 포커스 대상은 해당 컴포넌트가 관리한다.
+- `lib/monitor/session.svelte.ts`는 WebSocket 상태·수신 순서·보관 상한·프레임 배치와 세션 경계를, `commands.svelte.ts`는 명시적인 변경 동작과 불확실한 응답의 결과 확인을 담당한다.
+- 상태는 페이지별 인스턴스로 생성한다. 페이지 종료 시 연결, 요청, 재확인 타이머, 예약 프레임을 정리하며 전역 싱글턴을 두지 않는다.
+- 테마·리셋·reduced motion만 전역 CSS로 유지하고 화면 영역과 댓글 스타일은 담당 컴포넌트에 둔다. 기능·디자인·API 계약은 유지한다.

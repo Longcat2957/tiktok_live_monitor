@@ -50,7 +50,7 @@ class MonitorService:
 
     def _status(self, source: SourceName | None = None, username: str | None = None) -> Status:
         return Status(
-            source=source or self.config.comment_source,
+            source=source or "tiktok",
             username=username,
             state="connecting" if source else "idle",
             message="댓글 수신 준비 중" if source else "모드를 선택하고 시작해주세요",

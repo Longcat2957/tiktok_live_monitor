@@ -19,7 +19,6 @@ def make_monitor():
     return MonitorService(
         Settings(
             _env_file=None,
-            comment_source="mock",
             mock_interval_seconds=0.01,
             tiktok_reconnect_min_seconds=0.01,
             tiktok_reconnect_max_seconds=0.02,

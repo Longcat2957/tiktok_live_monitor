@@ -4,20 +4,34 @@ Raspberry Pi 4 + Raspberry Pi OS Desktop 64-bit에서 실행하는 한 계정 �
 
 ## 설치 가이드
 
-- [개발 환경 설치](docs/installation-dev.md): 도구 설치, mock 개발 서버, 테스트와 빌드.
+- [개발 환경 설치](docs/installation-dev.md): 도구 설치, 자동 reload 개발 서버, 테스트와 빌드.
 - [배포 환경 설치](docs/installation-deploy.md): Raspberry Pi, Docker Compose, Chromium kiosk와 운영.
 
-## 바로 실행: mock 데모
+## 실행 방식과 방송 선택
+
+앱은 하나이며 별도의 데모 서버·실방송 서버는 없습니다. **개발·운영은 실행 방식**, **실제 방송·데모는 화면에서 선택하는 데이터 입력**입니다.
+
+| 구분 | 선택 | 차이 |
+| --- | --- | --- |
+| 실행 방식 | 개발: `./scripts/dev.sh` | Python 자동 reload + Vite, 브라우저 접속은 5173 |
+| 실행 방식 | 운영: Docker Compose | 빌드된 UI + FastAPI 단일 컨테이너, 접속은 8000 |
+| 방송 선택 | 실제 방송 | 입력한 계정의 TikTok LIVE 수신 |
+| 방송 선택 | 데모 체험 | 외부 연결 없이 가짜 댓글·활동 생성 |
+
+어느 실행 방식에서도 두 방송 선택을 모두 사용할 수 있습니다. 서버는 항상 대기 상태로 시작하며 첫 화면에는 **실제 방송**이 선택되어 있습니다. 데모는 **데모 체험 → 시작**으로 실행합니다. 모드 변경은 **모니터 종료 · 처음으로**에서 하며, 재빌드나 `.env` 변경은 필요하지 않습니다.
+
+`.env`는 큐 크기·보관 수·재연결 간격 같은 서버 시작 설정만 담습니다. 기존 `COMMENT_SOURCE`는 제거되었으며 남아 있어도 무시됩니다. 기존 `.env`에서 해당 줄을 삭제하세요. 서버 재시작 후에는 모드·계정을 다시 선택하고 시작해야 합니다.
+
+## Docker로 실행
 
 Docker Engine과 Compose plugin이 있는 환경에서 저장소 루트로 이동합니다.
 
 ```bash
 test -f .env || cp .env.example .env
-# .env에서 COMMENT_SOURCE=mock으로 수정
 docker compose up -d --build --wait
 ```
 
-호스트 브라우저에서 `http://127.0.0.1:8000`을 열고 **데모 체험 → 시작**을 누릅니다. 기존 `.env`가 있다면 복사 단계를 생략하세요. `COMMENT_SOURCE`는 첫 화면의 초기 선택값이며 화면에서 언제든 바꿀 수 있습니다. 실제 방송은 **모니터 종료 · 처음으로 → 실제 방송**을 선택하고 계정을 입력한 뒤 시작합니다.
+호스트 브라우저에서 `http://127.0.0.1:8000`을 열고 **데모 체험 → 시작**을 누릅니다. 기존 `.env`가 있다면 복사 단계를 생략하세요. 실제 방송은 **모니터 종료 · 처음으로 → 실제 방송**을 선택하고 계정을 입력한 뒤 시작합니다.
 
 ### LIVE 정보 데모
 
@@ -38,7 +52,7 @@ docker compose up -d --build --wait
 
 **모니터 설정**은 댓글 화면 위에 모달로 열립니다. 현재 모드에 맞춰 실제 방송 설정 또는 데모 설정을 표시합니다. 기본 항목은 **목록 보관 수**(댓글과 활동 알림의 합계)이며 데모에서는 생성 간격도 바로 조절합니다. **고급 설정**을 펼치면 수신 대기 큐 크기와 로그 수준을, 실제 방송에서는 재연결 최소·최대 간격도 조절할 수 있습니다. 모드·계정은 모니터를 종료한 뒤 첫 화면에서 변경합니다. 취소는 변경을 버리고, 적용은 이전 연결을 종료하고 모든 연결 화면의 댓글을 비운 뒤 새 설정으로 시작합니다. 선택 계정은 메모리에만 보관하므로 새로고침에는 유지되고 백엔드 재시작 후에는 다시 입력합니다. 기존 `TIKTOK_USERNAME` 환경변수는 사용하지 않습니다. mock 데모는 계정 입력 없이 시작 버튼으로 실행합니다.
 
-댓글 화면 오른쪽 위의 +/− 버튼은 댓글 본문과 닉네임 크기를 20~200% 범위에서 누를 때마다 5%씩 조정합니다. 기본 크기는 100%이며 버튼 사이에 현재 배율을 표시합니다. 선택은 현재 브라우저에 저장되어 새로고침·재접속 후에도 유지됩니다. 잘못된 저장값은 100%로 복원합니다. 조절 아이콘은 **모니터 설정**, 원형 화살표 아이콘은 **댓글 비우기 · 다시 연결**, 문 밖으로 나가는 화살표 아이콘은 **모니터 종료 · 처음으로**입니다. 마우스를 올리거나 키보드로 포커스하면 설명이 표시됩니다. 새로고침은 현재 실행 중인 모드·계정을 유지한 채 기존 댓글을 비우고 연결을 다시 시작합니다. 실제 방송의 접속 초기 이벤트는 건너뛰며, 데모는 생성 순번을 이어갑니다. 데모 샘플 문구는 반복되지만 각 새 댓글에 고유한 데모 순번을 표시합니다. 초기화는 수신을 중지하고 모든 연결 화면의 댓글과 선택 계정을 비운 뒤 첫 화면으로 돌아갑니다. 첫 화면의 모드는 `.env`의 초기 선택값으로 복원됩니다.
+댓글 화면 오른쪽 위의 +/− 버튼은 댓글 본문과 닉네임 크기를 20~200% 범위에서 누를 때마다 5%씩 조정합니다. 기본 크기는 100%이며 버튼 사이에 현재 배율을 표시합니다. 선택은 현재 브라우저에 저장되어 새로고침·재접속 후에도 유지됩니다. 잘못된 저장값은 100%로 복원합니다. 조절 아이콘은 **모니터 설정**, 원형 화살표 아이콘은 **댓글 비우기 · 다시 연결**, 문 밖으로 나가는 화살표 아이콘은 **모니터 종료 · 처음으로**입니다. 마우스를 올리거나 키보드로 포커스하면 설명이 표시됩니다. 새로고침은 현재 실행 중인 모드·계정을 유지한 채 기존 댓글을 비우고 연결을 다시 시작합니다. 실제 방송의 접속 초기 이벤트는 건너뛰며, 데모는 생성 순번을 이어갑니다. 데모 샘플 문구는 반복되지만 각 새 댓글에 고유한 데모 순번을 표시합니다. 초기화는 수신을 중지하고 모든 연결 화면의 댓글과 선택 계정을 비운 뒤 첫 화면으로 돌아갑니다. 첫 화면에는 실제 방송이 선택됩니다. 시작 버튼을 누르기 전까지 방송에 연결하지 않습니다.
 
 ## 세션 API와 장애 처리
 
@@ -57,7 +71,7 @@ docker compose up -d --build --wait
 
 로컬 Host(`localhost`, `127.0.0.1`, `::1`)만 허용합니다. 브라우저의 변경 요청과 WebSocket은 같은 출처만 허용하며 WS는 Origin 헤더가 필수입니다. localhost 배포를 전제로 하며 외부 네트워크용 인증 서비스는 아닙니다. 실행은 **한 프로세스/한 worker**로 유지해야 합니다.
 
-설계와 검증 기준: [백엔드 재구축 계획](docs/backend-rebuild-plan.md), [프론트엔드 개선 계획·검증 결과](docs/frontend-improvement-plan.md).
+구현 요구사항은 [명세서](TIKTOK_LIVE_MONITOR_SPEC.md), 완료된 작업의 검증 결과는 [검증 기록](VALIDATION.md)을 참고하세요.
 
 ## UI 디자인
 
@@ -79,7 +93,6 @@ docker compose up -d --build --wait
 
 | 설정 | 기본값 / 의미 |
 | --- | --- |
-| `COMMENT_SOURCE` | 첫 화면의 초기 선택값: `tiktok` 또는 `mock`. 자동 실행하지 않음 |
 | `COMMENT_QUEUE_SIZE` | `500`, 수신 큐 최대 크기 (1–10,000) |
 | `COMMENT_HISTORY_SIZE` | `30`, 브라우저 댓글·활동 보관 수, 1–1000 |
 | `TIKTOK_RECONNECT_MIN_SECONDS` | `2`, TikTok 재연결 초기 간격 |
@@ -95,6 +108,38 @@ docker compose up -d --build --wait
 
 `/health`는 프로세스 작업 상태, source 상태, WebSocket 연결 수, 큐 사용량을 반환합니다. 방송 대기는 정상 상태이므로 컨테이너는 healthy입니다. 수신·소비 작업이 비정상 종료되면 HTTP 503/`status=error`와 화면 오류로 알리고 제한된 지수 간격으로 자동 복구합니다. `fault`, `recoveries`, `dropped_comments`, `slow_disconnects`로 장애와 과부하를 진단합니다. 외부 라이브러리가 종료를 거부하면 새 연결을 차단하고 `shutdown_timeout`을 표시합니다. 이때 `docker compose restart app`으로 재시작합니다. Docker restart policy는 **프로세스 종료**를 복구하고, unhealthy 상태만으로 컨테이너를 재시작하지는 않습니다.
 
+## 백엔드 코드 구조
+
+| 경로 (`backend/app/`) | 책임 |
+| --- | --- |
+| `main.py`, `__main__.py` | 앱 조립·lifespan과 서버 실행 |
+| `api/routers/` | 모니터 동작·설정·상태 HTTP API와 WebSocket 접속 |
+| `api/dependencies.py`, `security.py`, `exception_handlers.py` | 서비스 주입·로컬 출처 검사·오류 응답 |
+| `schemas/` | API 요청·응답과 댓글·활동·방송 상태 계약 |
+| `services/monitor.py` | `MonitorService`: 세션 전환·작업 종료·복구, 상태·설정 조회 |
+| `services/demo.py`, `event_sink.py` | 데모 생성과 세션별 수신 이벤트 전달 |
+| `integrations/tiktok.py` | `TikTokStream`: TikTokLive 연결·이벤트 변환·재연결 |
+| `realtime/broadcaster.py` | `WebSocketBroadcaster`: 연결별 송신 큐·느린 브라우저 격리 |
+
+라우터는 공통 `get_monitor` 의존성으로 서비스 인스턴스를 받습니다. 시작·종료·재연결·설정 변경은 서비스의 공개 메서드로 요청하며, 내부 잠금과 작업 정리 경로는 공유합니다. `/health`와 `/config`는 명시적인 응답 모델을 반환합니다. 새 API는 `api/routers/`, 외부 이벤트 변환은 `integrations/tiktok.py`, 세션 전환 규칙은 `services/monitor.py`에서 수정합니다. 테스트도 `backend/tests/` 아래 같은 책임별로 구분합니다.
+
+## 프론트엔드 코드 구조
+
+| 경로 (`frontend/src/`) | 책임 |
+| --- | --- |
+| `routes/+page.svelte` | 화면 조립, 설정창 열림·글자 배율, 시작·종료 후 포커스 전환 |
+| `lib/components/MonitorHeader.svelte` | 제목과 테마·배율·설정·재연결·종료 도구 |
+| `lib/components/AccountSetup.svelte` | 모드·계정 입력 초안과 시작 요청 오류 |
+| `lib/components/LiveSummary.svelte`, `RequestFeedback.svelte` | 방송 통계와 요청 복구 안내 |
+| `lib/components/CommentList.svelte`, `CommentItem.svelte` | 댓글·활동 표시와 읽기 위치 유지 |
+| `lib/components/SettingsDialog.svelte` | 설정 초안·검증·적용 |
+| `lib/monitor/session.svelte.ts` | WebSocket 연결, 세션 경계, 보관 상한과 프레임별 목록 반영 |
+| `lib/monitor/commands.svelte.ts` | 시작·종료·재연결·설정 변경, 불확실한 응답의 결과 확인 |
+| `lib/api.ts`, `websocket.ts`, `types.ts`, `monitor-state.ts` | HTTP 제한 시간, WS 재연결, 메시지 검증과 상태 표현 |
+| `app.css` | 테마 변수·기본 리셋·reduced motion; 영역별 스타일은 각 컴포넌트에 위치 |
+
+반응형 상태는 페이지마다 생성합니다. 입력과 설정 초안은 해당 컴포넌트가 소유하며, 화면을 닫으면 요청·복구 타이머·WebSocket·예약 프레임을 정리합니다. HTTP 상태 조회는 요청 완료 여부만 확인하고, 댓글 목록의 세션 경계는 WebSocket 수신만 적용합니다. 화면 기능을 추가할 때 페이지에 요청 처리나 입력 폼을 다시 모으지 않고 해당 컴포넌트와 상태 모듈을 수정합니다.
+
 ## 개발
 
 Linux 데스크톱에서 개발 도구와 Chromium을 설치한 뒤 아래 한 명령으로 백엔드, 프론트엔드, Chromium을 함께 실행할 수 있습니다.
@@ -103,7 +148,7 @@ Linux 데스크톱에서 개발 도구와 Chromium을 설치한 뒤 아래 한 �
 ./scripts/dev.sh
 ```
 
-의존성 설치 후 mock 모드로 `http://127.0.0.1:5173`을 자동으로 엽니다. 종료는 `Ctrl+C`입니다. 브라우저 없이 실행하려면 `DEV_OPEN_BROWSER=0 ./scripts/dev.sh`를 사용하세요. 실제 방송 연결과 옵션은 [개발 서버 실행 가이드](docs/installation-dev.md#4-개발-서버-실행)를 참고하세요.
+의존성 설치 후 `http://127.0.0.1:5173`을 자동으로 엽니다. 실제 방송·데모는 열린 화면에서 선택합니다. 종료는 `Ctrl+C`입니다. 브라우저 없이 실행하려면 `DEV_OPEN_BROWSER=0 ./scripts/dev.sh`를 사용하세요. 실제 방송 연결과 옵션은 [개발 서버 실행 가이드](docs/installation-dev.md#4-개발-서버-실행)를 참고하세요.
 
 Python 3.11 이상, uv, Node.js 22.20 이상(22 계열 권장), pnpm 10.20.0이 필요합니다. 버전은 `backend/uv.lock`, `frontend/pnpm-lock.yaml`로 고정합니다. 주요 검증 버전: TikTokLive 7.0.1, FastAPI 0.141.1, Svelte 5.57.0, SvelteKit 2.70.3, TypeScript 6.0.3. TypeScript 7은 현재 SvelteKit peer 지원 범위 밖이라 사용하지 않습니다.
 
@@ -112,7 +157,7 @@ Python 3.11 이상, uv, Node.js 22.20 이상(22 계열 권장), pnpm 10.20.0이 
 ```bash
 cd backend
 uv sync --frozen
-COMMENT_SOURCE=mock uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 별도 터미널:
@@ -133,6 +178,8 @@ uv run pytest
 uv run mypy
 uv run ruff check app tests
 cd ../frontend
+pnpm lint
+pnpm format:check
 pnpm check
 pnpm test
 pnpm build
@@ -140,7 +187,9 @@ pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
-E2E는 정적 빌드가 필요하며 `backend/.venv/bin/python`으로 mock 서버를 `127.0.0.1:18765`, 접근성 검사용 `18768`에 실행하고 종료합니다. Vite 프록시 검사는 `18766`을 사용합니다. 해당 포트는 비워두세요. 기존 Chromium을 쓰려면 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`를 지정합니다. Linux 브라우저 의존성이 부족하면 Playwright 공식 설치 안내에 따라 `pnpm exec playwright install --with-deps chromium`을 실행합니다.
+`pnpm lint`는 JavaScript·TypeScript·Svelte의 ESLint 권장 규칙을 검사합니다. `pnpm format:check`는 Prettier의 공백 4칸 들여쓰기를 포함한 서식을 확인합니다. 자동 수정은 `frontend`에서 `pnpm lint:fix`, 서식 적용은 `pnpm format`으로 실행합니다.
+
+E2E는 정적 빌드가 필요하며 `backend/.venv/bin/python`으로 테스트용 서버를 `127.0.0.1:18765`, 접근성 검사용 `18768`에 실행하고 종료합니다. 테스트가 API 또는 화면에서 데모를 명시적으로 시작합니다. Vite 프록시 검사는 `18766`을 사용합니다. 해당 포트는 비워두세요. 기존 Chromium을 쓰려면 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`를 지정합니다. Linux 브라우저 의존성이 부족하면 Playwright 공식 설치 안내에 따라 `pnpm exec playwright install --with-deps chromium`을 실행합니다.
 
 백엔드 테스트는 health/static route, WebSocket 상태·댓글·disconnect, 큐 drop, 느린 연결 격리, TikTok 이벤트 변환·대기·취소 정리를 확인합니다. 프론트엔드 테스트는 메시지 검증, 10,000개 입력 후 보관 수, 재연결 backoff와 unmount 정리를 확인합니다. E2E는 1080×1920 및 720×1280의 줄바꿈·상태 영역, HTML의 텍스트 표시, 연결 단절 중 댓글 유지, 서버 재시작 후 선택 화면 복귀, 1,000개 burst 수신 순서, 읽기 위치 보존, 요청 시간 초과·결과 확인, 테마·글자 크기 저장을 확인합니다. 390·320px 화면과 키보드 설정창 조작도 검사합니다.
 
@@ -152,7 +201,7 @@ pnpm build
 pnpm benchmark ../docs/frontend-benchmark-local.json
 ```
 
-보관 수 30/1,000개, 각 3회, 1,000건 입력, 4배 CPU 지연 조건에서 프레임 간격과 수신 순서를 기록합니다. Raspberry Pi의 시스템 Chromium은 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium`으로 지정할 수 있습니다. 로컬 측정 결과와 실제 Pi에서 확인할 항목은 [개선 계획](docs/frontend-improvement-plan.md)에 정리했습니다.
+보관 수 30/1,000개, 각 3회, 1,000건 입력, 4배 CPU 지연 조건에서 프레임 간격과 수신 순서를 기록합니다. Raspberry Pi의 시스템 Chromium은 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium`으로 지정할 수 있습니다. 로컬 측정 결과와 실제 Pi에서 확인할 항목은 [검증 기록](VALIDATION.md)에 정리했습니다.
 
 로컬 정적 빌드를 FastAPI에서 확인하려면 `pnpm build` 이후 백엔드를 시작하고 `http://127.0.0.1:8000`을 엽니다. 빌드 폴더를 새로 만든 경우 백엔드를 재시작하세요.
 
@@ -170,7 +219,7 @@ Node 빌드 단계와 Python 의존성 단계를 분리하며 최종 이미지�
 `main` 푸시 및 `main` 대상 PR에서 [CI](https://github.com/Longcat2957/tiktok_live_monitor/actions/workflows/ci.yml)가 실행됩니다.
 수동 실행(`workflow_dispatch`)도 지원하며 다음 순서로 검사합니다.
 
-1. **checks:** 백엔드 pytest/mypy/Ruff, 셸 문법, 프론트엔드 check/test/build, mock 브라우저 E2E 전체.
+1. **checks:** 백엔드 pytest/mypy/Ruff, 셸 문법·업데이트 스크립트 안전성, 프론트엔드 lint/format:check/check/test/build, mock 브라우저 E2E 전체.
 2. **Container:** checks 성공 후 AMD64(`ubuntu-24.04`)와 ARM64(`ubuntu-24.04-arm`)에서 각각 운영 이미지를 빌드하고 격리된 컨테이너로 실행합니다. UI 정적 파일, health, HTTP/WebSocket 수신, 설정·재연결·종료 및 실행 권한을 검증합니다.
 
 브라우저 HTML 보고서와 실패 trace·스크린샷은 Actions의 `browser-results` artifact에 7일간 보관합니다. TikTok 인증 없이 mock만 사용하며 테스트 컨테이너는 사용자의 `.env`와 기존 8000번 서비스를 건드리지 않습니다. ARM64 검증은 [GitHub의 ARM64 runner](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)에서 실행하며 실제 Pi의 GUI·부팅 복구 검증은 현장에서 진행합니다.
@@ -204,7 +253,7 @@ curl http://127.0.0.1:8000/health
 tail -f ~/.local/state/tiktok-live-monitor/kiosk.log
 ```
 
-소스를 업데이트한 다음 `./scripts/update.sh`로 재빌드하고 교체합니다. 이 스크립트는 사용자 파일을 보존하기 위해 Git fetch/pull을 수행하지 않습니다. 별도의 앱 systemd unit은 필요하지 않습니다. `docker compose stop`으로 수동 중지하면 unless-stopped 정책상 다음 부팅에도 중지 상태가 유지되므로 `docker compose up -d`로 다시 시작합니다.
+`./scripts/update.sh`가 현재 브랜치의 upstream에서 `git pull --ff-only`로 소스를 받고 재빌드·교체·healthy 확인까지 수행합니다. 미커밋 변경이나 이력 분기가 있으면 중단하며 `.env`는 보존합니다. 방송이 끝난 뒤 실행하세요. 빌드 실패 시 기존 컨테이너를 유지하지만, 교체 후 health 실패에 대한 자동 롤백은 없습니다. 기존 재빌드 전용 스크립트 사용자는 최초 한 번 `git pull --ff-only`로 새 스크립트를 받으세요. 별도의 앱 systemd unit은 필요하지 않습니다. `docker compose stop`으로 수동 중지하면 unless-stopped 정책상 다음 부팅에도 중지 상태가 유지되므로 `docker compose up -d`로 다시 시작합니다.
 
 ## 장애 진단
 

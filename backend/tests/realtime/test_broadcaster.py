@@ -10,7 +10,7 @@ from app.schemas.events import Comment, Status, User
 
 
 def test_mock_websocket_and_disconnect():
-    app = create_app(Settings(_env_file=None, comment_source="mock", mock_interval_seconds=0.01))
+    app = create_app(Settings(_env_file=None, mock_interval_seconds=0.01))
     with TestClient(app, base_url="http://localhost") as client:
         sid = client.get("/config").json()["session_id"]
         assert (

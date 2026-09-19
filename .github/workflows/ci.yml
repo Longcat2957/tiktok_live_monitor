@@ -18,8 +18,6 @@ jobs:
   checks:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    env:
-      COMMENT_SOURCE: mock
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -46,6 +44,9 @@ jobs:
             bash -n "$script"
           done
 
+      - name: Test update script with local Git repositories
+        run: python3 scripts/test-update.py
+
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: frontend/package.json
@@ -60,6 +61,8 @@ jobs:
         working-directory: frontend
         run: |
           pnpm install --frozen-lockfile
+          pnpm lint
+          pnpm format:check
           pnpm check
           pnpm test
           pnpm build

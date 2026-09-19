@@ -6,11 +6,11 @@ PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ "${1:-}" == --help ]]; then
   cat <<'EOF'
 사용법: ./scripts/dev.sh
-Linux 데스크톱에서 의존성 설치 → mock 개발 서버 → Chromium 실행.
+Linux 데스크톱에서 의존성 설치 → 개발 서버 → Chromium 실행.
+실제 방송과 데모는 열린 화면에서 선택합니다.
 Ctrl+C로 서버와 전용 브라우저를 함께 종료합니다.
 
 환경변수:
-  COMMENT_SOURCE=tiktok  첫 화면의 초기 모드 (계정은 화면에서 입력, 기본 mock)
   CHROMIUM_BIN=/경로     Chromium 실행 파일 직접 지정
   DEV_OPEN_BROWSER=0    브라우저 없이 서버만 실행 (기본 1)
 EOF
@@ -47,8 +47,7 @@ if [[ "${DEV_OPEN_BROWSER:-1}" != 0 ]]; then
   fi
 fi
 
-export COMMENT_SOURCE="${COMMENT_SOURCE:-mock}"
-echo "개발 의존성 설치 (source=$COMMENT_SOURCE)"
+echo '개발 의존성 설치'
 (cd "$PROJECT_ROOT/backend" && uv sync --locked)
 (cd "$PROJECT_ROOT/frontend" && pnpm install --frozen-lockfile)
 

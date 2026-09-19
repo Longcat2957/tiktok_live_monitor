@@ -26,7 +26,6 @@ class RuntimeSettings(BaseModel):
 class Settings(RuntimeSettings, BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT / ".env", extra="ignore")
 
-    comment_source: Literal["tiktok", "mock"] = "tiktok"
     host: str = Field(default="0.0.0.0", min_length=1)
     port: int = Field(default=8000, ge=1, le=65535)
     static_dir: Path = ROOT / "frontend" / "build"

@@ -31,18 +31,24 @@ def test_account_input(value):
     assert AccountInput(session_id="test", username=value).username == "hello.world"
 
 
-def test_account_lifecycle_settings_and_stale_requests():
+def test_account_lifecycle_settings_and_stale_requests(monkeypatch):
+    # Old deployment settings cannot choose or start the data source.
+    monkeypatch.setenv("COMMENT_SOURCE", "mock")
+
     async def run(source):
         source.status("connected", "test")
         await asyncio.Event().wait()
 
-    config = Settings(_env_file=None, comment_source="mock", comment_history_size=19)
+    config = Settings(_env_file=None, comment_history_size=19)
     app = create_app(config)
     with (
         patch("app.integrations.tiktok.TikTokStream.run", run),
         TestClient(app, base_url="http://localhost") as client,
     ):
         idle = current(client)
+        status = client.get("/health").json()["source"]
+        assert status["state"] == "idle" and status["source"] == "tiktok"
+        assert app.state.monitor.stream_task is None
         for username in [
             "",
             "@@a",
@@ -106,7 +112,8 @@ def test_account_lifecycle_settings_and_stale_requests():
         assert change(client, "POST", "/refresh").status_code == 200
         assert client.get("/config").json()["comment_history_size"] == 7
         draft = current(client)
-        assert change(client, "DELETE", "/account").json()["state"] == "idle"
+        stopped = change(client, "DELETE", "/account").json()
+        assert stopped["state"] == "idle" and stopped["source"] == "tiktok"
         assert (
             client.patch(
                 "/config", json={"session_id": draft, "settings": {"comment_history_size": 3}}

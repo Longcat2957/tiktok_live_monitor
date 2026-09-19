@@ -1,21 +1,23 @@
 <!doctype html>
 <html lang="ko">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#000000" />
-    <script>
-      // Apply the saved palette before the first paint.
-      try {
-        if (localStorage.getItem('monitor-theme') === 'light') {
-          document.documentElement.dataset.theme = 'light';
-          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff');
-        }
-      } catch {}
-    </script>
-    %sveltekit.head%
-  </head>
-  <body data-sveltekit-preload-data="off">
-    <div style="display: contents">%sveltekit.body%</div>
-  </body>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="theme-color" content="#000000" />
+        <script>
+            // Apply the saved palette before the first paint.
+            try {
+                if (localStorage.getItem('monitor-theme') === 'light') {
+                    document.documentElement.dataset.theme = 'light';
+                    document
+                        .querySelector('meta[name="theme-color"]')
+                        .setAttribute('content', '#ffffff');
+                }
+            } catch {}
+        </script>
+        %sveltekit.head%
+    </head>
+    <body data-sveltekit-preload-data="off">
+        <div style="display: contents">%sveltekit.body%</div>
+    </body>
 </html>

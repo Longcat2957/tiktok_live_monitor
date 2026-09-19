@@ -43,12 +43,12 @@
     data-kind={comment.type === 'activity' ? comment.kind : 'comment'}
 >
     {#if comment.type === 'activity'}
-        {@render avatar()}
-        <div class="activity-content">
+        <div class="activity-header">
+            {@render avatar()}
             <p class="nickname" title={name}>{name}</p>
-            <p class="body" title={activityText}>{activityText}</p>
+            <span class="activity-label">{labels[comment.kind]}</span>
         </div>
-        <span class="activity-label">{labels[comment.kind]}</span>
+        <p class="body">{activityText}</p>
     {:else}
         <div class="comment-author">
             {@render avatar()}
@@ -136,51 +136,49 @@
         color: var(--m3c-on-secondary-container);
         background: var(--m3c-secondary-container);
     }
-    .activity-label {
-        color: var(--m3c-secondary);
-        border: 1px solid var(--m3c-secondary-container);
-        margin-left: auto;
-    }
     .comment.activity {
-        display: grid;
-        grid-template-columns: auto minmax(0, 1fr) auto;
-        align-items: center;
-        gap: 10px;
-        padding-block: clamp(10px, 1.4vw, 18px);
+        margin-block: 8px;
+        padding: clamp(18px, 2.7vw, 30px);
+        border: 0;
+        border-radius: 16px;
+        background: color-mix(in srgb, var(--activity-accent) 24%, var(--m3c-surface));
+        color: var(--m3c-on-surface);
     }
-    .activity .avatar {
-        width: max(20px, calc(30px * var(--comment-scale, 1)));
-        height: max(20px, calc(30px * var(--comment-scale, 1)));
+    .activity[data-kind='gift'] {
+        --activity-accent: #ff4d80;
     }
-    .activity-content {
+    .activity[data-kind='follow'] {
+        --activity-accent: #20cf9a;
+    }
+    .activity[data-kind='share'] {
+        --activity-accent: #4c9dff;
+    }
+    .activity[data-kind='subscribe'] {
+        --activity-accent: #bc82ff;
+    }
+    .activity-header {
         display: flex;
-        align-items: baseline;
+        align-items: center;
         flex-wrap: wrap;
-        gap: 2px 10px;
-        min-width: 0;
+        gap: 8px 12px;
+        margin-bottom: 12px;
     }
     .activity .nickname {
+        flex: 1;
         margin: 0;
         min-width: 0;
-        max-width: 100%;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        font-size: calc(clamp(16px, 2.2vw, 24px) * var(--comment-scale, 1));
-        line-height: 1.4;
+        font-size: calc(clamp(20px, 2.8vw, 32px) * var(--comment-scale, 1));
+        color: inherit;
     }
     .activity .body {
-        min-width: 0;
-        max-width: 100%;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        font-size: calc(clamp(16px, 2.2vw, 24px) * var(--comment-scale, 1));
-        line-height: 1.4;
-        color: var(--m3c-on-secondary-container);
+        font-size: calc(clamp(32px, 5.2vw, 62px) * var(--comment-scale, 1));
+        font-weight: 750;
+        line-height: 1.3;
     }
     .activity-label {
-        margin-left: 0;
-        white-space: nowrap;
+        padding: 4px 8px;
+        border: 1px solid currentColor;
+        font-size: max(12px, calc(clamp(13px, 1.8vw, 20px) * var(--comment-scale, 1)));
+        overflow-wrap: anywhere;
     }
 </style>

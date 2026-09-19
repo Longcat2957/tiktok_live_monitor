@@ -4,8 +4,9 @@ from unittest.mock import patch
 import pytest
 
 from app.config import Settings
-from app.models import Comment, User
-from app.session import ConflictError, Monitor, UnavailableError
+from app.schemas.events import Comment, User
+from app.services.errors import ConflictError, UnavailableError
+from app.services.monitor import MonitorService
 
 
 async def eventually(predicate, timeout=1):
@@ -15,7 +16,7 @@ async def eventually(predicate, timeout=1):
 
 
 def make_monitor():
-    return Monitor(
+    return MonitorService(
         Settings(
             _env_file=None,
             comment_source="mock",
@@ -27,8 +28,8 @@ def make_monitor():
 
 
 async def start(monitor):
-    await monitor.change("start", monitor.manager.status.session_id, source="mock")
-    await eventually(lambda: monitor.source_task is not None)
+    await monitor.start(monitor.broadcaster.status.session_id, source="mock")
+    await eventually(lambda: monitor.stream_task is not None)
 
 
 async def test_concurrent_changes_only_one_wins_and_old_events_are_ignored():
@@ -36,21 +37,21 @@ async def test_concurrent_changes_only_one_wins_and_old_events_are_ignored():
     try:
         await start(monitor)
         old_sink = monitor.sink
-        sid = monitor.manager.status.session_id
+        sid = monitor.broadcaster.status.session_id
         results = await asyncio.gather(
-            monitor.change("refresh", sid), monitor.change("stop", sid), return_exceptions=True
+            monitor.refresh(sid), monitor.stop(sid), return_exceptions=True
         )
         assert sum(isinstance(result, ConflictError) for result in results) == 1
-        current = monitor.manager.status
+        current = monitor.broadcaster.status
         old_sink.status("error", "old event")
         old_sink.publish(Comment(user=User(nickname="n", unique_id="u"), comment="old"))
-        assert monitor.manager.status == current
+        assert monitor.broadcaster.status == current
         assert not old_sink.active
     finally:
         await monitor.close()
 
 
-@pytest.mark.parametrize("worker", ["source_task", "consumer_task"])
+@pytest.mark.parametrize("worker", ["stream_task", "consumer_task"])
 async def test_worker_exit_recovers_without_user_action(worker):
     monitor = make_monitor()
     try:
@@ -61,7 +62,7 @@ async def test_worker_exit_recovers_without_user_action(worker):
         assert monitor.fault == "worker_stopped"
         assert not monitor.healthy
         await eventually(lambda: getattr(monitor, worker) is not old and monitor.healthy)
-        assert monitor.manager.status.state in {"connecting", "connected"}
+        assert monitor.broadcaster.status.state in {"connecting", "connected"}
     finally:
         await monitor.close()
 
@@ -80,17 +81,17 @@ async def test_request_cancellation_does_not_interrupt_transition():
                 await release.wait()
 
     try:
-        with patch.object(monitor, "_make_source", return_value=Source()):
+        with patch.object(monitor, "_make_stream", return_value=Source()):
             await start(monitor)
             await asyncio.sleep(0)
-            request = asyncio.create_task(monitor.change("stop", monitor.manager.status.session_id))
+            request = asyncio.create_task(monitor.stop(monitor.broadcaster.status.session_id))
             await cleanup.wait()
             request.cancel()
             await asyncio.gather(request, return_exceptions=True)
             release.set()
-            await eventually(lambda: monitor.manager.status.state == "idle")
+            await eventually(lambda: monitor.broadcaster.status.state == "idle")
             assert monitor.healthy
-            assert monitor.source_task is None
+            assert monitor.stream_task is None
     finally:
         release.set()
         await monitor.close()
@@ -111,24 +112,24 @@ async def test_uncooperative_worker_is_quarantined_and_new_source_is_blocked():
                     pass
 
     with (
-        patch("app.session.STOP_TIMEOUT", 0.01),
-        patch.object(monitor, "_make_source", return_value=Source()),
+        patch("app.services.monitor.STOP_TIMEOUT", 0.01),
+        patch.object(monitor, "_make_stream", return_value=Source()),
     ):
         try:
             await start(monitor)
             await entered.wait()
             sink = monitor.sink
-            sid = monitor.manager.status.session_id
+            sid = monitor.broadcaster.status.session_id
             with pytest.raises(UnavailableError):
-                await monitor.change("stop", sid)
+                await monitor.stop(sid)
             assert not monitor.healthy
             assert monitor.fault == "shutdown_timeout"
             assert not sink.active
             with pytest.raises(UnavailableError):
-                await monitor.change("refresh", sid)
+                await monitor.refresh(sid)
         finally:
             release.set()
-            await eventually(lambda: monitor.source_task.done())
+            await eventually(lambda: monitor.stream_task.done())
             await monitor.close()
 
 
@@ -144,10 +145,10 @@ async def test_shutdown_during_transition_never_starts_another_receiver():
                 cleaning.set()
                 await release.wait()
 
-    with patch.object(monitor, "_make_source", return_value=Source()) as factory:
+    with patch.object(monitor, "_make_stream", return_value=Source()) as factory:
         await start(monitor)
         await asyncio.sleep(0)
-        changing = asyncio.create_task(monitor.change("refresh", monitor.manager.status.session_id))
+        changing = asyncio.create_task(monitor.refresh(monitor.broadcaster.status.session_id))
         await cleaning.wait()
         closing = asyncio.create_task(monitor.close())
         await eventually(lambda: monitor.closed)
@@ -156,7 +157,7 @@ async def test_shutdown_during_transition_never_starts_another_receiver():
         await closing
         assert isinstance(result[0], UnavailableError)
         assert factory.call_count == 1
-        assert monitor.source_task is None
+        assert monitor.stream_task is None
         assert not monitor.commands
 
 
@@ -168,8 +169,8 @@ async def test_runtime_logging_does_not_enable_dependency_debug():
     root_level, app_level = logging.getLogger().level, app_logger.level
     try:
         await start(monitor)
-        await monitor.change(
-            "settings", monitor.manager.status.session_id, settings={"log_level": "DEBUG"}
+        await monitor.update_settings(
+            monitor.broadcaster.status.session_id, settings={"log_level": "DEBUG"}
         )
         assert app_logger.level == logging.DEBUG
         assert logging.getLogger().level == root_level

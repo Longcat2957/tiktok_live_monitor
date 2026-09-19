@@ -5,7 +5,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
-from app.main import AccountInput, create_app
+from app.main import create_app
+from app.schemas.monitor import AccountInput
 
 ORIGIN = {"Origin": "http://localhost"}
 
@@ -38,7 +39,7 @@ def test_account_lifecycle_settings_and_stale_requests():
     config = Settings(_env_file=None, comment_source="mock", comment_history_size=19)
     app = create_app(config)
     with (
-        patch("app.sources.tiktok.TikTokSource.run", run),
+        patch("app.integrations.tiktok.TikTokStream.run", run),
         TestClient(app, base_url="http://localhost") as client,
     ):
         idle = current(client)
@@ -54,7 +55,7 @@ def test_account_lifecycle_settings_and_stale_requests():
         assert client.post("/account", json={"source": "mock"}).status_code == 422
         assert change(client, "POST", "/account", source="mock").status_code == 200
         monitor = app.state.monitor
-        initial_source = monitor.source_task
+        initial_source = monitor.stream_task
         before = client.get("/config").json()
         for invalid in [
             {"comment_history_size": 0},
@@ -65,7 +66,7 @@ def test_account_lifecycle_settings_and_stale_requests():
         ]:
             assert change(client, "PATCH", "/config", settings=invalid).status_code == 422
             assert client.get("/config").json() == before
-            assert monitor.source_task is initial_source
+            assert monitor.stream_task is initial_source
         assert (
             change(
                 client, "PATCH", "/config", settings={"tiktok_reconnect_min_seconds": 4}
@@ -139,7 +140,7 @@ def test_account_lifecycle_settings_and_stale_requests():
         )
         assert change(client, "POST", "/refresh").json()["username"] == "first"
         assert change(client, "DELETE", "/account").json()["username"] is None
-        assert monitor.source_task is None
+        assert monitor.stream_task is None
         assert monitor.consumer_task is None
     with TestClient(create_app(config), base_url="http://localhost") as client:
         assert client.get("/config").json()["comment_history_size"] == 19

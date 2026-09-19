@@ -23,8 +23,8 @@ from TikTokLive.events import (
 )
 
 from ..config import Settings
-from ..models import Activity, Badge, Comment, LiveInfo, LiveState, SourceState, User
-from .base import SourceSink
+from ..schemas.events import Activity, Badge, Comment, LiveInfo, LiveState, SourceState, User
+from ..services.event_sink import EventSink
 
 logger = logging.getLogger(__name__)
 
@@ -113,10 +113,10 @@ def parse_activity(event: object) -> Activity | None:
     return None
 
 
-class TikTokSource:
+class TikTokStream:
     def __init__(
         self,
-        sink: SourceSink,
+        sink: EventSink,
         settings: Settings,
         username: str,
     ) -> None:
@@ -183,6 +183,8 @@ class TikTokSource:
             try:
                 self.status("connecting", "TikTok LIVE 연결 중")
                 client = TikTokLiveClient(unique_id=self.username)
+                # Upstream parse errors otherwise log raw payload bytes and traceback.
+                client.ignore_broken_payload = True
                 client.add_listener(CommentEvent, self.on_comment)
                 client.add_listener(ConnectEvent, self.on_connect)
                 client.add_listener(DisconnectEvent, self.on_disconnect)

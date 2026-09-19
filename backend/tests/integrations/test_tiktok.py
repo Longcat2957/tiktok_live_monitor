@@ -6,10 +6,10 @@ from TikTokLive.client.errors import UserOfflineError
 from TikTokLive.events import CommentEvent
 
 from app.config import Settings
-from app.models import Status
-from app.sources.base import SourceSink
-from app.sources.tiktok import TikTokSource, parse_comment
-from app.websocket import WebSocketManager
+from app.integrations.tiktok import TikTokStream, parse_comment
+from app.realtime.broadcaster import WebSocketBroadcaster
+from app.schemas.events import Status
+from app.services.event_sink import EventSink
 
 
 def test_installed_tiktoklive_event_api() -> None:
@@ -36,18 +36,18 @@ def test_comment_extraction_preserves_text() -> None:
 
 
 async def test_offline_backoff_and_cancellation_cleanup() -> None:
-    manager = WebSocketManager(Status(source="tiktok", state="connecting", message="test"))
+    manager = WebSocketBroadcaster(Status(source="tiktok", state="connecting", message="test"))
     settings = Settings(
         _env_file=None,
         tiktok_reconnect_min_seconds=0.01,
         tiktok_reconnect_max_seconds=0.02,
     )
-    source = TikTokSource(SourceSink(asyncio.Queue(10), manager), settings, "test")
+    source = TikTokStream(EventSink(asyncio.Queue(10), manager), settings, "test")
     fake = MagicMock()
     fake.start = AsyncMock(side_effect=UserOfflineError())
     fake.disconnect = AsyncMock()
     fake.web.close = AsyncMock()
-    with patch("app.sources.tiktok.TikTokLiveClient", return_value=fake):
+    with patch("app.integrations.tiktok.TikTokLiveClient", return_value=fake):
         task = asyncio.create_task(source.run())
         await asyncio.sleep(0.065)
         task.cancel()
@@ -60,8 +60,8 @@ async def test_offline_backoff_and_cancellation_cleanup() -> None:
 
 
 async def test_connected_cancellation_closes_resources() -> None:
-    manager = WebSocketManager(Status(source="tiktok", state="connecting", message="test"))
-    source = TikTokSource(SourceSink(asyncio.Queue(10), manager), Settings(_env_file=None), "test")
+    manager = WebSocketBroadcaster(Status(source="tiktok", state="connecting", message="test"))
+    source = TikTokStream(EventSink(asyncio.Queue(10), manager), Settings(_env_file=None), "test")
     connection = asyncio.create_task(asyncio.Event().wait())
     fake = MagicMock()
     fake.start = AsyncMock(return_value=connection)
@@ -71,7 +71,7 @@ async def test_connected_cancellation_closes_resources() -> None:
 
     fake.disconnect = AsyncMock(side_effect=disconnect)
     fake.web.close = AsyncMock()
-    with patch("app.sources.tiktok.TikTokLiveClient", return_value=fake):
+    with patch("app.integrations.tiktok.TikTokLiveClient", return_value=fake):
         task = asyncio.create_task(source.run())
         await asyncio.sleep(0.01)
         task.cancel()
@@ -84,9 +84,9 @@ async def test_connected_cancellation_closes_resources() -> None:
 
 
 async def test_cancel_during_disconnect_does_not_reconnect():
-    manager = WebSocketManager(Status(source="tiktok", state="connecting", message="test"))
-    source = TikTokSource(
-        SourceSink(asyncio.Queue(10), manager),
+    manager = WebSocketBroadcaster(Status(source="tiktok", state="connecting", message="test"))
+    source = TikTokStream(
+        EventSink(asyncio.Queue(10), manager),
         Settings(_env_file=None, tiktok_reconnect_min_seconds=0.001),
         "test",
     )
@@ -100,7 +100,7 @@ async def test_cancel_during_disconnect_does_not_reconnect():
 
     fake.disconnect = AsyncMock(side_effect=disconnect)
     fake.web.close = AsyncMock()
-    with patch("app.sources.tiktok.TikTokLiveClient", return_value=fake):
+    with patch("app.integrations.tiktok.TikTokLiveClient", return_value=fake):
         task = asyncio.create_task(source.run())
         await asyncio.wait_for(cleaning.wait(), 1)
         task.cancel()
@@ -120,9 +120,10 @@ def test_comment_limits_and_no_payload_logging(caplog):
 
 
 async def test_upstream_cleanup_swallowing_cancel_cannot_restart_source():
-    source = TikTokSource(
-        SourceSink(
-            asyncio.Queue(10), WebSocketManager(Status(source="tiktok", state="idle", message=""))
+    source = TikTokStream(
+        EventSink(
+            asyncio.Queue(10),
+            WebSocketBroadcaster(Status(source="tiktok", state="idle", message="")),
         ),
         Settings(_env_file=None, tiktok_reconnect_min_seconds=0.001),
         "test",
@@ -140,7 +141,7 @@ async def test_upstream_cleanup_swallowing_cancel_cannot_restart_source():
 
     fake.disconnect = AsyncMock(side_effect=disconnect)
     fake.web.close = AsyncMock()
-    with patch("app.sources.tiktok.TikTokLiveClient", return_value=fake):
+    with patch("app.integrations.tiktok.TikTokLiveClient", return_value=fake):
         task = asyncio.create_task(source.run())
         await cleaning.wait()
         task.cancel()

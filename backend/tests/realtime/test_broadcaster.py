@@ -5,8 +5,8 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
-from app.models import Comment, Status, User
-from app.websocket import WebSocketManager, enqueue_comment
+from app.realtime.broadcaster import WebSocketBroadcaster, enqueue_event
+from app.schemas.events import Comment, Status, User
 
 
 def test_mock_websocket_and_disconnect():
@@ -34,7 +34,7 @@ def test_mock_websocket_and_disconnect():
 def test_queue_drops_oldest() -> None:
     queue: asyncio.Queue[Comment] = asyncio.Queue(2)
     for body in ["one", "two", "three"]:
-        enqueue_comment(queue, Comment(user=User(nickname="n", unique_id="u"), comment=body))
+        enqueue_event(queue, Comment(user=User(nickname="n", unique_id="u"), comment=body))
     assert queue.qsize() == 2
     assert queue.get_nowait().comment == "two"
     assert queue.get_nowait().comment == "three"
@@ -63,7 +63,7 @@ class Socket:
 
 
 async def test_broken_and_slow_peers_do_not_block_healthy_peer() -> None:
-    manager = WebSocketManager(
+    manager = WebSocketBroadcaster(
         Status(source="mock", state="connected", message="ok"), send_timeout=0.03
     )
     healthy, broken, slow = Socket(), Socket(broken=True), Socket(slow=True)
@@ -85,7 +85,9 @@ async def test_broken_and_slow_peers_do_not_block_healthy_peer() -> None:
 
 
 async def test_peer_queue_overflow_disconnects_only_slow_client() -> None:
-    manager = WebSocketManager(Status(source="mock", state="connected", message="ok"), capacity=1)
+    manager = WebSocketBroadcaster(
+        Status(source="mock", state="connected", message="ok"), capacity=1
+    )
     slow = Socket(slow=True)
     await manager.connect(slow)
     message = Comment(user=User(nickname="n", unique_id="u"), comment="x")
@@ -97,13 +99,13 @@ async def test_peer_queue_overflow_disconnects_only_slow_client() -> None:
 
 
 async def test_burst_keeps_fast_peer_order_and_disconnects_only_slow_peer():
-    manager = WebSocketManager(Status(source="mock", state="connected", message="ok"))
+    manager = WebSocketBroadcaster(Status(source="mock", state="connected", message="ok"))
     fast, slow = Socket(), Socket(slow=True)
     await manager.connect(fast)
     await manager.connect(slow)
     queue = asyncio.Queue(500)
     for number in range(500):
-        enqueue_comment(queue, Comment(user=User(nickname="n", unique_id="u"), comment=str(number)))
+        enqueue_event(queue, Comment(user=User(nickname="n", unique_id="u"), comment=str(number)))
     consumer = asyncio.create_task(manager.consume(queue))
     try:
         await asyncio.wait_for(queue.join(), 1)
@@ -120,10 +122,13 @@ async def test_burst_keeps_fast_peer_order_and_disconnects_only_slow_peer():
 
 
 async def test_session_boundary_and_peer_limit():
-    manager = WebSocketManager(Status(source="mock", state="idle", message="old"), max_clients=1)
+    manager = WebSocketBroadcaster(
+        Status(source="mock", state="idle", message="old"), max_clients=1
+    )
     fast, rejected = Socket(), Socket()
-    await manager.connect(fast)
-    await manager.connect(rejected)
+    assert await manager.connect(fast)
+    assert await manager.connect(fast)  # Duplicate registration reuses the accepted peer.
+    assert not await manager.connect(rejected)
     assert rejected.closed
     old = manager.status.session_id
     manager.broadcast(Comment(user=User(nickname="n", unique_id="u"), comment="old"))
@@ -138,7 +143,7 @@ async def test_session_boundary_and_peer_limit():
 
 
 async def test_concurrent_handshakes_respect_connection_limit():
-    manager = WebSocketManager(Status(source="mock", state="idle", message="ok"), max_clients=1)
+    manager = WebSocketBroadcaster(Status(source="mock", state="idle", message="ok"), max_clients=1)
     accepting, release = asyncio.Event(), asyncio.Event()
 
     class Pending(Socket):
@@ -149,9 +154,9 @@ async def test_concurrent_handshakes_respect_connection_limit():
     first, second = Pending(), Socket()
     opening = asyncio.create_task(manager.connect(first))
     await accepting.wait()
-    await manager.connect(second)
+    assert not await manager.connect(second)
     assert second.closed and second.accepts == 0
     release.set()
-    await opening
+    assert await opening
     assert manager.accepting == 0
     await manager.close()

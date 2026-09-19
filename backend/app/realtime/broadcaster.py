@@ -6,17 +6,17 @@ from time import monotonic
 
 from fastapi import WebSocket
 
-from .models import FeedEvent, LiveInfo, Message, SourceState, Status
+from ..schemas.events import FeedEvent, LiveInfo, Message, SourceState, Status
 
 logger = logging.getLogger(__name__)
 
 
-def enqueue_comment(queue: asyncio.Queue[FeedEvent], comment: FeedEvent) -> bool:
+def enqueue_event(queue: asyncio.Queue[FeedEvent], event: FeedEvent) -> bool:
     dropped = queue.full()
     if dropped:
         queue.get_nowait()
         queue.task_done()
-    queue.put_nowait(comment)
+    queue.put_nowait(event)
     return dropped
 
 
@@ -26,7 +26,7 @@ class Peer:
     task: asyncio.Task[None]
 
 
-class WebSocketManager:
+class WebSocketBroadcaster:
     def __init__(
         self, status: Status, capacity: int = 100, send_timeout: float = 5, max_clients: int = 16
     ) -> None:
@@ -41,12 +41,12 @@ class WebSocketManager:
         self.clients: dict[WebSocket, Peer] = {}
         self.tasks: set[asyncio.Task[None]] = set()
 
-    async def connect(self, socket: WebSocket) -> None:
+    async def connect(self, socket: WebSocket) -> bool:
         if socket in self.clients:
-            return
+            return True
         if len(self.tasks) + self.accepting >= self.max_clients:
             await socket.close(code=1013)
-            return
+            return False
         self.accepting += 1
         try:
             await socket.accept()
@@ -60,6 +60,7 @@ class WebSocketManager:
             self.accepting -= 1
         # Enter the sender's try/finally before an immediate burst can cancel it.
         await asyncio.sleep(0)
+        return socket in self.clients
 
     async def _send(self, socket: WebSocket, queue: asyncio.Queue[Message]) -> None:
         try:
@@ -130,11 +131,11 @@ class WebSocketManager:
                 last_live = monotonic()
             try:
                 async with asyncio.timeout(1):
-                    comment = await queue.get()
+                    event = await queue.get()
             except TimeoutError:
                 continue
             try:
-                self.broadcast(comment)
+                self.broadcast(event)
             finally:
                 queue.task_done()
             # A nonempty Queue.get() does not yield to the per-browser senders.

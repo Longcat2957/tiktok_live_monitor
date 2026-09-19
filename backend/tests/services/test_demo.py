@@ -1,18 +1,18 @@
 import asyncio
 from itertools import count
 
-from app.models import Status
-from app.sources.base import SourceSink
-from app.sources.mock import MockSource
-from app.websocket import WebSocketManager
+from app.realtime.broadcaster import WebSocketBroadcaster
+from app.schemas.events import Status
+from app.services.demo import DemoStream
+from app.services.event_sink import EventSink
 
 
 async def test_reconnecting_mock_continues_sequence() -> None:
     queue = asyncio.Queue(10)
-    manager = WebSocketManager(Status(source="mock", state="idle", message="test"))
+    manager = WebSocketBroadcaster(Status(source="mock", state="idle", message="test"))
     sequence = count()
     for number in range(1, 11):
-        source = MockSource(SourceSink(queue, manager), 3600, sequence)
+        source = DemoStream(EventSink(queue, manager), 3600, sequence)
         task = asyncio.create_task(source.run())
         try:
             comment = await asyncio.wait_for(queue.get(), timeout=1)
@@ -24,11 +24,11 @@ async def test_reconnecting_mock_continues_sequence() -> None:
 
 
 def test_source_sink_bounds_queue_counts_drops_and_rate_limits_logs(caplog):
-    from app.models import Comment, User
+    from app.schemas.events import Comment, User
 
     queue = asyncio.Queue(2)
-    manager = WebSocketManager(Status(source="mock", state="idle", message="test"))
-    sink = SourceSink(queue, manager)
+    manager = WebSocketBroadcaster(Status(source="mock", state="idle", message="test"))
+    sink = EventSink(queue, manager)
     for number in range(5):
         sink.publish(Comment(user=User(nickname="n", unique_id="u"), comment=str(number)))
     assert manager.dropped_comments == 3

@@ -10,7 +10,7 @@ from websockets.exceptions import InvalidStatus
 
 from app.config import Settings
 from app.main import create_app
-from app.models import Comment, User
+from app.schemas.events import Comment, User
 
 
 async def test_real_http_websocket_burst_conflicts_and_shutdown():
@@ -75,5 +75,5 @@ async def test_real_http_websocket_burst_conflicts_and_shutdown():
         server.should_exit = True
         await asyncio.wait_for(serving, timeout=3)
         listener.close()
-    assert not app.state.monitor.manager.tasks
+    assert not app.state.monitor.broadcaster.tasks
     assert not app.state.monitor.commands

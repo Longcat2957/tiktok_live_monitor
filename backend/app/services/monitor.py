@@ -1,25 +1,26 @@
 import asyncio
 import logging
 from itertools import count
-from typing import Literal
+from typing import Literal, Protocol
 
-from .config import RuntimeSettings, Settings
-from .models import FeedEvent, SourceName, Status
-from .sources.base import CommentSource, SourceSink
-from .sources.mock import MockSource
-from .websocket import WebSocketManager
+from pydantic import ValidationError
+
+from ..config import RuntimeSettings, Settings
+from ..realtime.broadcaster import WebSocketBroadcaster
+from ..schemas.events import FeedEvent, SourceName, Status
+from ..schemas.health import HealthResponse, QueueInfo
+from ..schemas.settings import SettingsResponse
+from .demo import DemoStream
+from .errors import ConflictError, InvalidSettingsError, UnavailableError
+from .event_sink import EventSink
 
 logger = logging.getLogger(__name__)
 STOP_TIMEOUT = 12.0
 Action = Literal["start", "stop", "refresh", "settings"]
 
 
-class ConflictError(Exception):
-    pass
-
-
-class UnavailableError(Exception):
-    pass
+class EventStream(Protocol):
+    async def run(self) -> None: ...
 
 
 def observe(task: asyncio.Task[None]) -> None:
@@ -28,24 +29,24 @@ def observe(task: asyncio.Task[None]) -> None:
             logger.error("Worker %s failed: %s", task.get_name(), type(error).__name__)
 
 
-class Monitor:
+class MonitorService:
     """Owns the single account, its workers, and serialized session transitions."""
 
     def __init__(self, config: Settings) -> None:
         self.config = config
-        self.manager = WebSocketManager(self._status())
+        self.broadcaster = WebSocketBroadcaster(self._status())
         self.queue: asyncio.Queue[FeedEvent] = asyncio.Queue(config.comment_queue_size)
-        self.source_task: asyncio.Task[None] | None = None
+        self.stream_task: asyncio.Task[None] | None = None
         self.consumer_task: asyncio.Task[None] | None = None
         self.supervisor_task: asyncio.Task[None] | None = None
-        self.sink: SourceSink | None = None
+        self.sink: EventSink | None = None
         self.lock = asyncio.Lock()
         self.commands: set[asyncio.Task[Status]] = set()
         self.stuck: set[asyncio.Task[None]] = set()
         self.closed = False
         self.fault: str | None = None
         self.recoveries = 0
-        self.mock_sequence = count()
+        self.demo_sequence = count()
 
     def _status(self, source: SourceName | None = None, username: str | None = None) -> Status:
         return Status(
@@ -64,22 +65,54 @@ class Monitor:
 
     @property
     def healthy(self) -> bool:
-        active = self.manager.status.state != "idle"
+        active = self.broadcaster.status.state != "idle"
         return (
             not self.closed
             and self.fault is None
             and (not active or self.supervisor_task is not None and not self.supervisor_task.done())
         )
 
-    def _make_source(self, sink: SourceSink) -> CommentSource:
-        status = self.manager.status
+    def _make_stream(self, sink: EventSink) -> EventStream:
+        status = self.broadcaster.status
         if status.source == "mock":
-            return MockSource(sink, self.config.mock_interval_seconds, self.mock_sequence)
-        from .sources.tiktok import TikTokSource
+            return DemoStream(sink, self.config.mock_interval_seconds, self.demo_sequence)
+        from ..integrations.tiktok import TikTokStream
 
-        return TikTokSource(sink, self.config, status.username or "")
+        return TikTokStream(sink, self.config, status.username or "")
 
-    async def change(
+    def get_settings(self) -> SettingsResponse:
+        return SettingsResponse(
+            **self.runtime_settings.model_dump(), session_id=self.broadcaster.status.session_id
+        )
+
+    def get_health(self) -> HealthResponse:
+        return HealthResponse(
+            status="ok" if self.healthy else "error",
+            source=self.broadcaster.status,
+            websocket_connections=len(self.broadcaster.clients),
+            pending_commands=len(self.commands),
+            queue=QueueInfo(size=self.queue.qsize(), capacity=self.queue.maxsize),
+            fault=self.fault,
+            recoveries=self.recoveries,
+            dropped_comments=self.broadcaster.dropped_comments,
+            slow_disconnects=self.broadcaster.slow_disconnects,
+        )
+
+    async def start(
+        self, session_id: str, *, source: SourceName, username: str | None = None
+    ) -> Status:
+        return await self._submit("start", session_id, source=source, username=username)
+
+    async def stop(self, session_id: str) -> Status:
+        return await self._submit("stop", session_id)
+
+    async def refresh(self, session_id: str) -> Status:
+        return await self._submit("refresh", session_id)
+
+    async def update_settings(self, session_id: str, settings: dict[str, object]) -> Status:
+        return await self._submit("settings", session_id, settings=settings)
+
+    async def _submit(
         self,
         action: Action,
         session_id: str,
@@ -116,7 +149,7 @@ class Monitor:
             self.stuck = {task for task in self.stuck if not task.done()}
             if self.closed or self.stuck:
                 raise UnavailableError("이전 연결을 종료하지 못했습니다. 서버를 재시작해주세요.")
-            current = self.manager.status
+            current = self.broadcaster.status
             if session_id != current.session_id:
                 raise ConflictError(
                     "다른 화면에서 상태가 변경되었습니다. 현재 상태를 확인해주세요."
@@ -140,7 +173,10 @@ class Monitor:
                 )
                 if irrelevant.intersection(changes):
                     raise ConflictError("현재 모드에서 사용하는 설정만 변경해주세요.")
-                updated = RuntimeSettings.model_validate(updated.model_dump() | changes)
+                try:
+                    updated = RuntimeSettings.model_validate(updated.model_dump() | changes)
+                except ValidationError:
+                    raise InvalidSettingsError("설정값의 허용 범위를 확인해주세요.") from None
             if not await self._stop_session():
                 raise UnavailableError("이전 연결을 종료하지 못했습니다. 서버를 재시작해주세요.")
             if self.closed:
@@ -149,18 +185,18 @@ class Monitor:
             logging.getLogger("app").setLevel(self.config.log_level)
             self.queue = asyncio.Queue(self.config.comment_queue_size)
             self.fault = None
-            self.manager.begin_session(self._status(source, username))
+            self.broadcaster.begin_session(self._status(source, username))
             if source is not None:
                 self.supervisor_task = asyncio.create_task(
                     self._supervise(), name="monitor-supervisor"
                 )
                 self.supervisor_task.add_done_callback(observe)
-            return self.manager.status
+            return self.broadcaster.status
 
     async def _stop_workers(self) -> bool:
         if self.sink is not None:
             self.sink.active = False
-        workers = {t for t in (self.source_task, self.consumer_task) if t is not None}
+        workers = {t for t in (self.stream_task, self.consumer_task) if t is not None}
         for task in workers:
             if not task.done():
                 task.cancel()
@@ -181,7 +217,7 @@ class Monitor:
                 self.stuck.update(pending)
                 self.stuck.update(
                     t
-                    for t in (self.source_task, self.consumer_task)
+                    for t in (self.stream_task, self.consumer_task)
                     if t is not None and not t.done()
                 )
         if not self.stuck and (supervisor is None or supervisor.done()):
@@ -190,31 +226,31 @@ class Monitor:
         self.stuck = {task for task in self.stuck if not task.done()}
         if self.stuck:
             self.fault = "shutdown_timeout"
-            self.manager.update_status(
-                "error", "연결 종료 시간 초과 · 서버 재시작 필요", self.manager.status.session_id
+            self.broadcaster.update_status(
+                "error", "연결 종료 시간 초과 · 서버 재시작 필요", self.broadcaster.status.session_id
             )
             return False
-        self.source_task = self.consumer_task = self.supervisor_task = None
+        self.stream_task = self.consumer_task = self.supervisor_task = None
         return True
 
     async def _supervise(self) -> None:
         delay = self.config.tiktok_reconnect_min_seconds
         while True:
-            self.sink = SourceSink(self.queue, self.manager)
+            self.sink = EventSink(self.queue, self.broadcaster)
             self.fault = None
             self.sink.status("connecting", "댓글 수신 준비 중")
             try:
-                source = self._make_source(self.sink)
+                stream = self._make_stream(self.sink)
                 self.consumer_task = asyncio.create_task(
-                    self.manager.consume(self.queue), name="comment-consumer"
+                    self.broadcaster.consume(self.queue), name="event-consumer"
                 )
-                self.source_task = asyncio.create_task(source.run(), name="comment-source")
-                for task in (self.consumer_task, self.source_task):
+                self.stream_task = asyncio.create_task(stream.run(), name="event-stream")
+                for task in (self.consumer_task, self.stream_task):
                     task.add_done_callback(observe)
                 await asyncio.wait(
-                    {self.consumer_task, self.source_task}, return_when=asyncio.FIRST_COMPLETED
+                    {self.consumer_task, self.stream_task}, return_when=asyncio.FIRST_COMPLETED
                 )
-                # A source must run until stopped, including when its upstream child is cancelled.
+                # A stream must run until stopped, including when its upstream child is cancelled.
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -222,12 +258,12 @@ class Monitor:
             finally:
                 stopped = await self._stop_workers()
             self.fault = "worker_stopped" if stopped else "shutdown_timeout"
-            self.manager.update_status(
+            self.broadcaster.update_status(
                 "error",
                 "댓글 수신 오류 · 자동 복구 대기"
                 if stopped
                 else "연결 종료 시간 초과 · 서버 재시작 필요",
-                self.manager.status.session_id,
+                self.broadcaster.status.session_id,
             )
             if not stopped:
                 return
@@ -241,4 +277,4 @@ class Monitor:
         if self.commands:
             await asyncio.wait(self.commands, timeout=STOP_TIMEOUT + 1)
         await self._stop_session()
-        await self.manager.close()
+        await self.broadcaster.close()

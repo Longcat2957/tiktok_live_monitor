@@ -2,8 +2,8 @@ import asyncio
 from collections.abc import Iterator
 from typing import Literal
 
-from ..models import Activity, Badge, Comment, LiveInfo, User
-from .base import SourceSink
+from ..schemas.events import Activity, Badge, Comment, LiveInfo, User
+from .event_sink import EventSink
 
 SAMPLES = [
     ("민수", "minsu123", "검정색도 있나요?"),
@@ -17,10 +17,10 @@ SAMPLES = [
 ]
 
 
-class MockSource:
+class DemoStream:
     def __init__(
         self,
-        sink: SourceSink,
+        sink: EventSink,
         interval: float,
         sequence: Iterator[int],
     ) -> None:

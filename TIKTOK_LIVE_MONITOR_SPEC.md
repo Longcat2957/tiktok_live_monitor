@@ -429,7 +429,7 @@ Docker daemon 자체는 OS 부팅 시 시작되도록 `sudo systemctl enable --n
 
 ### 업데이트 스크립트
 
-`scripts/update.sh`는 현재 브랜치의 upstream에서 `git pull --ff-only` 후 이미지 빌드와 Compose 교체, 최대 120초 healthy 대기를 수행한다. 미커밋 변경·추적하지 않는 파일, `.env` 누락, upstream 미설정 또는 분기된 Git 이력은 중단한다. `.env`는 보존하고 자동 stash/reset/merge는 하지 않는다. 빌드 실패 시 기존 컨테이너를 유지하며 교체 후 자동 롤백은 구현하지 않는다. 방송 종료 후 실행하고 CI 통과 여부는 운영자가 먼저 확인한다. `python3 scripts/test-update.py`는 로컬 임시 Git 저장소와 가짜 Docker로 업데이트·중단 경로를 검사한다.
+`scripts/update.sh`는 현재 브랜치의 upstream에서 `git pull --ff-only` 후 이미지 빌드와 Compose 교체, 최대 120초 healthy 대기를 수행한다. 미커밋 변경·추적하지 않는 파일, `.env` 누락, upstream 미설정 또는 분기된 Git 이력은 중단한다. `.env`는 보존하고 자동 stash/reset/merge는 하지 않는다. 빌드 실패 시 기존 컨테이너를 유지하며 교체 후 자동 롤백은 구현하지 않는다. 방송 종료 후 실행하고 CI 통과 여부는 운영자가 먼저 확인한다. 정상 배포 후 앱 라벨(`org.opencontainers.image.title=tiktok-live-monitor`)이 있는 태그 없는 미사용 이미지를 정리하며 라벨 도입 전의 직전 앱 이미지도 태그가 없을 때 강제 옵션 없이 삭제한다. 사용 중·별도 태그 이미지는 보존한다. 빌드·health 실패 시 정리하지 않으며 정리 실패는 경고로 처리한다. 공유 빌드 캐시·볼륨은 삭제하지 않고 `docker system df`로 사용량을 표시한다. `python3 scripts/test-update.py`는 로컬 임시 Git 저장소와 가짜 Docker로 업데이트·중단 경로를 검사한다.
 
 ### Chromium kiosk
 

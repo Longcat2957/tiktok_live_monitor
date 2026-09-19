@@ -253,7 +253,7 @@ curl http://127.0.0.1:8000/health
 tail -f ~/.local/state/tiktok-live-monitor/kiosk.log
 ```
 
-`./scripts/update.sh`가 현재 브랜치의 upstream에서 `git pull --ff-only`로 소스를 받고 재빌드·교체·healthy 확인까지 수행합니다. 미커밋 변경이나 이력 분기가 있으면 중단하며 `.env`는 보존합니다. 방송이 끝난 뒤 실행하세요. 빌드 실패 시 기존 컨테이너를 유지하지만, 교체 후 health 실패에 대한 자동 롤백은 없습니다. 기존 재빌드 전용 스크립트 사용자는 최초 한 번 `git pull --ff-only`로 새 스크립트를 받으세요. 별도의 앱 systemd unit은 필요하지 않습니다. `docker compose stop`으로 수동 중지하면 unless-stopped 정책상 다음 부팅에도 중지 상태가 유지되므로 `docker compose up -d`로 다시 시작합니다.
+`./scripts/update.sh`가 현재 브랜치의 upstream에서 `git pull --ff-only`로 소스를 받고 재빌드·교체·healthy 확인까지 수행합니다. 미커밋 변경이나 이력 분기가 있으면 중단하며 `.env`는 보존합니다. 방송이 끝난 뒤 실행하세요. 빌드 실패 시 기존 컨테이너를 유지하지만, 교체 후 health 실패에 대한 자동 롤백은 없습니다. 기존 재빌드 전용 스크립트 사용자는 최초 한 번 `git pull --ff-only`로 새 스크립트를 받으세요. 정상 배포 후 앱 라벨이 있는 태그 없는 미사용 이미지와 이번 교체 직전의 태그 없는 앱 이미지를 정리하고 `docker system df`로 사용량을 출력합니다. 실행 중·별도 태그 이미지는 유지하며 공유 빌드 캐시와 볼륨은 자동 삭제하지 않습니다. 별도의 앱 systemd unit은 필요하지 않습니다. `docker compose stop`으로 수동 중지하면 unless-stopped 정책상 다음 부팅에도 중지 상태가 유지되므로 `docker compose up -d`로 다시 시작합니다.
 
 ## 장애 진단
 

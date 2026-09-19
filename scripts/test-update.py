@@ -44,17 +44,31 @@ def main():
         bin_dir = root / "bin"
         bin_dir.mkdir()
         log = root / "docker.log"
+        deployed = root / "deployed"
         docker = bin_dir / "docker"
         docker.write_text(
             "#!/bin/bash\n"
             'printf "%s\\n" "$*" >> "$UPDATE_TEST_LOG"\n'
             'if [[ "$*" == "${UPDATE_TEST_FAIL:-never}" ]]; then exit 7; fi\n'
+            'case "$*" in\n'
+            '  "compose images -q app")\n'
+            '    if [[ -f "$UPDATE_TEST_DEPLOYED" ]]; then echo sha256:new;\n'
+            '    else echo "${UPDATE_TEST_PREVIOUS_IMAGE-sha256:old}"; fi ;;\n'
+            '  "image inspect --format {{len .RepoTags}} sha256:old")\n'
+            '    echo "${UPDATE_TEST_TAGS:-0}" ;;\n'
+            '  "compose up -d --wait --wait-timeout 120") touch "$UPDATE_TEST_DEPLOYED" ;;\n'
+            "esac\n"
         )
         docker.chmod(0o755)
-        env.update(PATH=f"{bin_dir}:{env['PATH']}", UPDATE_TEST_LOG=str(log))
+        env.update(
+            PATH=f"{bin_dir}:{env['PATH']}",
+            UPDATE_TEST_LOG=str(log),
+            UPDATE_TEST_DEPLOYED=str(deployed),
+        )
 
         def update(success, *args):
             log.write_text("")
+            deployed.unlink(missing_ok=True)
             result = run("bash", str(checkout / "scripts/update.sh"), *args, check=False)
             assert (result.returncode == 0) == success, result.stdout + result.stderr
             assert settings.read_bytes() == original_settings
@@ -91,9 +105,15 @@ def main():
         assert commands == [
             "compose version",
             "info",
+            "compose images -q app",
             "compose build",
             "updated-build",
             "compose up -d --wait --wait-timeout 120",
+            "compose images -q app",
+            "image inspect --format {{len .RepoTags}} sha256:old",
+            "image rm sha256:old",
+            "image prune --force --filter label=org.opencontainers.image.title=tiktok-live-monitor",
+            "system df",
         ], commands
         assert (
             run("git", "rev-parse", "HEAD", cwd=checkout).stdout
@@ -105,6 +125,22 @@ def main():
         assert update(False)[-1] == env["UPDATE_TEST_FAIL"]
         del env["UPDATE_TEST_FAIL"]
 
+        # Cleanup only follows a healthy deployment, preserves tags and never forces removal.
+        env["UPDATE_TEST_TAGS"] = "1"
+        assert not any(command.startswith("image rm") for command in update(True))
+        del env["UPDATE_TEST_TAGS"]
+        for previous in ("sha256:new", ""):
+            env["UPDATE_TEST_PREVIOUS_IMAGE"] = previous
+            assert not any(command.startswith("image rm") for command in update(True))
+        del env["UPDATE_TEST_PREVIOUS_IMAGE"]
+        for failure in (
+            "image rm sha256:old",  # Docker refuses if another container still uses it.
+            "image prune --force --filter label=org.opencontainers.image.title=tiktok-live-monitor",
+        ):
+            env["UPDATE_TEST_FAIL"] = failure
+            assert update(True)[-1] == "system df"  # Cleanup failure is not deployment failure.
+        del env["UPDATE_TEST_FAIL"]
+
         for repo in (seed, checkout):
             (repo / "different.txt").write_text(repo.name)
             run("git", "add", ".", cwd=repo)
@@ -112,7 +148,7 @@ def main():
         run("git", "push", cwd=seed)
         assert update(False) == ["compose version", "info"]
         assert (checkout / "different.txt").read_text() == "checkout"
-    print("Update checks passed: fast-forward, local changes, .env, build and health failures.")
+    print("Update checks passed: Git, .env, build/health failures and scoped image cleanup.")
 
 
 if __name__ == "__main__":

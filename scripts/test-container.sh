@@ -46,6 +46,7 @@ trap 'exit 143' TERM
 SMOKE_CONTAINER="$("${compose[@]}" ps --quiet app)"
 [[ -n "$SMOKE_CONTAINER" ]]
 [[ "$(docker inspect --format '{{.Config.User}}' "$SMOKE_CONTAINER")" == '10001:10001' ]]
+[[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.title"}}' "$SMOKE_IMAGE")" == 'tiktok-live-monitor' ]]
 [[ "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$SMOKE_CONTAINER")" == 'true' ]]
 SMOKE_BINDING="$(docker inspect --format '{{range (index .NetworkSettings.Ports "8000/tcp")}}{{.HostIp}}:{{.HostPort}}{{"\n"}}{{end}}' "$SMOKE_CONTAINER")"
 [[ "$SMOKE_BINDING" =~ ^127\.0\.0\.1:[0-9]+$ ]]

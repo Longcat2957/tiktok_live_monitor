@@ -7,6 +7,7 @@ main() {
   if [[ "${1:-}" == --help && $# == 1 ]]; then
     echo '사용법: ./scripts/update.sh'
     echo '현재 브랜치의 upstream에서 fast-forward 업데이트 후 Docker 빌드·교체·healthy 확인.'
+    echo '성공 후 이 앱의 태그 없는 미사용 이미지를 정리하고 Docker 디스크 사용량을 표시합니다.'
     echo '미커밋 변경이 있으면 중단합니다. .env는 보존합니다. 방송이 끝난 뒤 실행하세요.'
     return
   fi
@@ -32,15 +33,28 @@ main() {
   fi
   docker compose version >/dev/null
   docker info >/dev/null
-  local previous
+  local previous previous_image current_image
   previous="$(git rev-parse --short HEAD)"
   git pull --ff-only
   echo "배포: $previous → $(git rev-parse --short HEAD)"
+  previous_image="$(docker compose images -q app)"
   ./scripts/build.sh
   if ! docker compose up -d --wait --wait-timeout 120; then
     echo '배포 상태 확인 실패. 자동 롤백하지 않습니다. docker compose logs --tail=100 app으로 확인하세요.' >&2
     return 1
   fi
+  # Also handle the previously deployed image from before we added the image label.
+  current_image="$(docker compose images -q app)" || current_image=""
+  if [[ -n "$previous_image" && -n "$current_image" && "$previous_image" != "$current_image" ]]; then
+    if [[ "$(docker image inspect --format '{{len .RepoTags}}' "$previous_image")" == 0 ]]; then
+      docker image rm "$previous_image" || echo '이전 이미지 정리 실패. 사용 중인 이미지는 유지합니다.' >&2
+    fi
+  fi
+  # No --all: preserve tagged images and every image referenced by a container.
+  docker image prune --force --filter label=org.opencontainers.image.title=tiktok-live-monitor || \
+    echo '앱 이미지 정리 실패. 배포는 완료되었지만 디스크 사용량을 확인하세요.' >&2
+  # Build cache is shared with other projects; report it without a global prune.
+  docker system df || echo 'Docker 디스크 사용량을 조회하지 못했습니다.' >&2
   echo '업데이트 완료. 컨테이너가 교체되었다면 화면에서 방송·데모를 선택하고 다시 시작하세요.'
 }
 

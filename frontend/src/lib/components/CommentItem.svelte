@@ -23,8 +23,8 @@
             <img
                 src={comment.user.avatar_url}
                 alt=""
-                width="40"
-                height="40"
+                width="80"
+                height="80"
                 loading="lazy"
                 decoding="async"
                 referrerpolicy="no-referrer"
@@ -78,7 +78,7 @@
     }
     .nickname {
         margin: 0 0 10px;
-        font-size: calc(clamp(17px, 2.4vw, 27px) * var(--comment-scale, 1));
+        font-size: calc(clamp(34px, 4.8vw, 54px) * var(--comment-scale, 1));
         color: var(--m3c-on-surface-variant);
         line-height: 1.4;
         overflow-wrap: anywhere;
@@ -104,8 +104,8 @@
         margin: 0;
     }
     .avatar {
-        width: max(20px, calc(40px * var(--comment-scale, 1)));
-        height: max(20px, calc(40px * var(--comment-scale, 1)));
+        width: max(40px, calc(80px * var(--comment-scale, 1)));
+        height: max(40px, calc(80px * var(--comment-scale, 1)));
         flex-shrink: 0;
         display: inline-flex;
         align-items: center;
@@ -114,7 +114,7 @@
         border-radius: 50%;
         background: var(--m3c-surface-container-high);
         color: var(--m3c-on-surface-variant);
-        font-size: max(12px, calc(18px * var(--comment-scale, 1)));
+        font-size: max(24px, calc(36px * var(--comment-scale, 1)));
     }
     .avatar img {
         width: 100%;
@@ -123,10 +123,12 @@
     }
     .user-badge,
     .activity-label {
-        border-radius: 4px;
-        padding: 2px 6px;
-        font-size: max(10px, calc(12px * var(--comment-scale, 1)));
+        border-radius: 8px;
+        padding: 4px 12px;
+        font-size: max(20px, calc(24px * var(--comment-scale, 1)));
         font-weight: 700;
+        max-width: 100%;
+        overflow-wrap: anywhere;
     }
     .user-badge {
         color: var(--m3c-on-primary-container);
@@ -164,10 +166,10 @@
         margin-bottom: 12px;
     }
     .activity .nickname {
-        flex: 1;
+        flex: 1 1 8ch;
         margin: 0;
         min-width: 0;
-        font-size: calc(clamp(20px, 2.8vw, 32px) * var(--comment-scale, 1));
+        font-size: calc(clamp(40px, 5.6vw, 64px) * var(--comment-scale, 1));
         color: inherit;
     }
     .activity .body {
@@ -176,9 +178,9 @@
         line-height: 1.3;
     }
     .activity-label {
-        padding: 4px 8px;
-        border: 1px solid currentColor;
-        font-size: max(12px, calc(clamp(13px, 1.8vw, 20px) * var(--comment-scale, 1)));
+        padding: 8px 16px;
+        border: 2px solid currentColor;
+        font-size: max(24px, calc(clamp(26px, 3.6vw, 40px) * var(--comment-scale, 1)));
         overflow-wrap: anywhere;
     }
 </style>

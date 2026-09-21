@@ -1,8 +1,19 @@
 <script lang="ts">
     import { safeAvatar, type FeedMessage } from '../types';
-    let { comment }: { comment: FeedMessage } = $props();
+    let { comment, previous }: { comment: FeedMessage; previous?: FeedMessage } = $props();
     let imageFailed = $state(false);
+    let continued = $derived(
+        comment.type === 'comment' &&
+            previous?.type === 'comment' &&
+            Boolean(comment.user.unique_id.trim()) &&
+            comment.user.unique_id === previous.user.unique_id,
+    );
     let name = $derived(comment.user.nickname || comment.user.unique_id || '시청자');
+    let parts = $derived(
+        comment.type === 'comment'
+            ? comment.comment.split(/(?<![\p{L}\p{N}_.@])(@[\p{L}\p{N}_]+(?:\.[\p{L}\p{N}_]+)*)/u)
+            : [],
+    );
     const labels = { gift: '선물', follow: '팔로우', share: '공유', subscribe: '구독' };
     let activityText = $derived(
         comment.type === 'activity'
@@ -39,6 +50,8 @@
 <article
     class="comment"
     class:activity={comment.type === 'activity'}
+    class:continued
+    aria-label={continued ? `${name}의 이어지는 댓글` : undefined}
     data-comment-id={comment.id}
     data-kind={comment.type === 'activity' ? comment.kind : 'comment'}
 >
@@ -50,18 +63,24 @@
         </div>
         <p class="body">{activityText}</p>
     {:else}
-        <div class="comment-author">
-            {@render avatar()}
-            <p class="nickname">{name}</p>
-            {#each comment.user.badges ?? [] as badge (badge.kind)}
-                <span class="user-badge" data-kind={badge.kind}
-                    >{badge.kind === 'subscriber' ? '구독자' : '팬'}{badge.level == null
-                        ? ''
-                        : ` Lv.${badge.level}`}</span
-                >
+        {#if !continued}
+            <div class="comment-author">
+                {@render avatar()}
+                <p class="nickname">{name}</p>
+                {#each comment.user.badges ?? [] as badge (badge.kind)}
+                    <span class="user-badge" data-kind={badge.kind}
+                        >{badge.kind === 'subscriber' ? '구독자' : '팬'}{badge.level == null
+                            ? ''
+                            : ` Lv.${badge.level}`}</span
+                    >
+                {/each}
+            </div>
+        {/if}
+        <p class="body">
+            {#each parts as part, index (index)}
+                {#if index % 2 === 1}<strong class="mention">{part}</strong>{:else}{part}{/if}
             {/each}
-        </div>
-        <p class="body">{comment.comment}</p>
+        </p>
     {/if}
 </article>
 
@@ -75,6 +94,13 @@
     .comment:last-child {
         border-bottom: 0;
         padding-bottom: 8px;
+    }
+    .comment:has(+ :global(.continued)) {
+        border-bottom: 0;
+        padding-bottom: 0;
+    }
+    .continued {
+        padding-top: 8px;
     }
     .nickname {
         margin: 0 0 10px;
@@ -99,6 +125,15 @@
         flex-wrap: wrap;
         gap: 6px 10px;
         margin-bottom: 10px;
+    }
+    .mention {
+        color: var(--m3c-on-secondary-container);
+        background: var(--m3c-secondary-container);
+        border-radius: 0.16em;
+        padding-block: 0.02em;
+        font-weight: 800;
+        -webkit-box-decoration-break: clone;
+        box-decoration-break: clone;
     }
     .comment-author .nickname {
         margin: 0;

@@ -18,7 +18,7 @@
     } = $props();
     let sessionId = untrack(() => source.session_id);
     let mode = $state<Source>(untrack(() => source.source));
-    let account = $state(untrack(() => source.username ?? ''));
+    let account = $state(untrack(() => source.username ?? '@sejame33'));
     let error = $state('');
     let panel: HTMLElement;
 
@@ -26,7 +26,7 @@
         if (sessionId !== source.session_id) {
             sessionId = source.session_id;
             mode = source.source;
-            account = source.username ?? '';
+            account = source.username ?? '@sejame33';
             error = '';
         }
     });

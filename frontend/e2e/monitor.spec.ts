@@ -220,6 +220,161 @@ test('malformed frames are ignored and burst comments preserve order', async ({ 
     expect(errors).toEqual([]);
 });
 
+test('consecutive comments share their author while preserving order, retention and reading position', async ({
+    page,
+}) => {
+    let send: (data: object) => void;
+    const status = (session_id: string) => ({
+        type: 'status',
+        source: 'mock',
+        state: 'connected',
+        message: '',
+        session_id,
+        username: null,
+        comment_history_size: 30,
+    });
+    const comment = (id: string, unique_id = 'first', nickname = '시청자') => ({
+        type: 'comment',
+        id,
+        received_at: '2026-09-21T00:00:00Z',
+        user: { nickname, unique_id },
+        comment: `${id} 번째 댓글 @sejame33`,
+    });
+    await page.routeWebSocket('**/ws', (socket) => {
+        send = (data) => socket.send(JSON.stringify(data));
+        send(status('grouping'));
+        send(comment('a'));
+        send(comment('b', 'first', '바뀐 닉네임'));
+    });
+    await page.setViewportSize({ width: 720, height: 1280 });
+    await page.goto('/');
+    const rows = page.locator('.comment');
+    await expect(rows).toHaveCount(2);
+    await expect(page.locator('.comment-author')).toHaveCount(1);
+    await expect(rows.nth(1)).toHaveClass(/continued/);
+    await expect(rows.first()).toHaveCSS('border-bottom-width', '0px');
+    await expect(rows.first()).toHaveCSS('padding-bottom', '0px');
+    await expect(rows.nth(1)).toHaveCSS('padding-top', '8px');
+    await expect(page.locator('.mention')).toHaveCount(2);
+    await page.screenshot({ path: 'test-results/consecutive-comments.png' });
+
+    send!(comment('c', 'second'));
+    send!(comment('d'));
+    send!({ ...comment('e'), type: 'activity', kind: 'follow', gift_name: '', count: 1 });
+    send!(comment('f'));
+    send!(comment('g'));
+    send!(comment('h', ''));
+    send!(comment('i', ''));
+    await expect(rows).toHaveCount(9);
+    expect(
+        await rows.evaluateAll((nodes) =>
+            nodes.map((node) => node.getAttribute('data-comment-id')),
+        ),
+    ).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']);
+    await expect(page.locator('.comment-author')).toHaveCount(6);
+    await expect(page.locator('.activity-header')).toHaveCount(1);
+    await expect(page.locator('.continued')).toHaveCount(2);
+
+    send!(status('bounded-group'));
+    await expect(rows).toHaveCount(0);
+    for (let i = 0; i < 30; i++) send!(comment(String(i)));
+    await expect(rows).toHaveCount(30);
+    await expect(page.locator('.comment-author')).toHaveCount(1);
+    const viewport = page.locator('.comment-viewport');
+    await viewport.evaluate((node) => {
+        const text = node.querySelector('[data-comment-id="10"] .body')!;
+        node.scrollTop += text.getBoundingClientRect().top - node.getBoundingClientRect().top + 13;
+    });
+    await expect(page.locator('.reading-controls')).toBeVisible();
+    const readingText = page.locator('[data-comment-id="10"] .body');
+    const before = (await readingText.boundingBox())!.y;
+    for (let i = 30; i < 40; i++) send!(comment(String(i)));
+    await expect(rows.first()).toHaveAttribute('data-comment-id', '10');
+    await expect(rows.last()).toHaveAttribute('data-comment-id', '39');
+    await expect(rows).toHaveCount(30);
+    await expect(rows.first().locator('.comment-author')).toHaveCount(1);
+    await expect(page.locator('.continued')).toHaveCount(29);
+    await expect
+        .poll(async () => Math.abs((await readingText.boundingBox())!.y - before))
+        .toBeLessThanOrEqual(1);
+    await viewport.press('End');
+    await expect(page.locator('.reading-controls')).toHaveCount(0);
+    await expect
+        .poll(() =>
+            viewport.evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop),
+        )
+        .toBeLessThanOrEqual(1);
+    send!(status('new-group'));
+    send!(comment('new'));
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first().locator('.comment-author')).toHaveCount(1);
+    await expect(page.locator('.continued')).toHaveCount(0);
+});
+
+test('comment mentions stand out while preserving plain text and wrapping', async ({ page }) => {
+    const body =
+        '@sejame33 안녕하세요! (@친구_2) @alex.live.\n메일 hello@example.com · @ · @@skip\n<script>alert("@viewer")</script>';
+    let send: (comment: string) => void;
+    await page.routeWebSocket('**/ws', (socket) => {
+        socket.send(
+            JSON.stringify({
+                type: 'status',
+                source: 'tiktok',
+                state: 'connected',
+                message: '',
+                session_id: 'mentions',
+                username: 'sejame33',
+                comment_history_size: 30,
+            }),
+        );
+        send = (comment) =>
+            socket.send(
+                JSON.stringify({
+                    type: 'comment',
+                    id: comment,
+                    received_at: '2026-09-21T00:00:00Z',
+                    user: { nickname: '시청자', unique_id: 'viewer' },
+                    comment,
+                }),
+            );
+        send(body);
+    });
+    await page.setViewportSize({ width: 720, height: 1280 });
+    await page.goto('/');
+    const text = page.locator('.body').first();
+    await expect(text.locator('.mention')).toHaveText([
+        '@sejame33',
+        '@친구_2',
+        '@alex.live',
+        '@viewer',
+    ]);
+    expect(await text.textContent()).toBe(body);
+    await expect(text.locator('script, a')).toHaveCount(0);
+    const mention = text.locator('.mention').first();
+    for (const theme of ['dark', 'light']) {
+        if (theme === 'light')
+            await page.getByRole('button', { name: '라이트 테마로 전환' }).click();
+        expect(await mention.evaluate((node) => getComputedStyle(node).color)).not.toBe(
+            await text.evaluate((node) => getComputedStyle(node).color),
+        );
+        await expect(mention).toHaveCSS('font-weight', '800');
+        await page.screenshot({ path: `test-results/mentions-${theme}.png` });
+    }
+    await page.setViewportSize({ width: 320, height: 844 });
+    for (let i = 0; i < 20; i++)
+        await page.getByRole('button', { name: '댓글 글자 크게', exact: true }).click();
+    const longMention = `@${'long_name.'.repeat(24)}end`;
+    send!(longMention);
+    await expect(page.locator('.body')).toHaveCount(2);
+    await expect(page.locator('.body').last().locator('.mention')).toHaveText(longMention);
+    await expect(page.locator('.font-scale-control output')).toContainText('200%');
+    expect(
+        await page
+            .locator('.comment-viewport')
+            .evaluate((node) => node.scrollWidth <= node.clientWidth),
+    ).toBe(true);
+});
+
 test('account entry, validation, switching and reconnect session boundary', async ({ page }) => {
     let send: (value: string) => void;
     let generation = 0;
@@ -278,6 +433,7 @@ test('account entry, validation, switching and reconnect session boundary', asyn
     await page.goto('/');
     const input = page.getByLabel('TikTok 아이디 또는 방송 주소');
     await expect(input).toBeVisible();
+    await expect(input).toHaveValue('@sejame33');
     const field = await input.boundingBox();
     const hint = await page.locator('#account-hint').boundingBox();
     expect(field!.height).toBeGreaterThanOrEqual(44);
@@ -361,7 +517,7 @@ test('idle session updates reset drafts without losing or stealing focus', async
     await expect(page.locator('#account-error')).toBeVisible();
 
     send!('second', 'tiktok');
-    await expect(input).toHaveValue('');
+    await expect(input).toHaveValue('@sejame33');
     await expect(input).toBeFocused();
     await expect(page.locator('#account-error')).toHaveCount(0);
 
@@ -369,7 +525,7 @@ test('idle session updates reset drafts without losing or stealing focus', async
     const theme = page.getByRole('button', { name: '라이트 테마로 전환' });
     await theme.focus();
     send!('third', 'mock');
-    await expect(input).toHaveValue('');
+    await expect(input).toHaveValue('@sejame33');
     await expect(page.getByRole('radio', { name: '데모 체험' })).toBeChecked();
     await expect(theme).toBeFocused();
 });
@@ -401,7 +557,7 @@ test('late account errors cannot overwrite a new idle session', async ({ page })
     await page.getByRole('button', { name: '시작', exact: true }).click();
     await expect.poll(() => Boolean(respond)).toBe(true);
     send!('second');
-    await expect(input).toHaveValue('');
+    await expect(input).toHaveValue('@sejame33');
     await respond!();
     await expect(input).toBeEnabled();
     await expect(page.locator('#account-error')).toHaveCount(0);

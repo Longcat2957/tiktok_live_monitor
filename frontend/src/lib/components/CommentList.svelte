@@ -85,9 +85,11 @@
             const first = [...viewport.querySelectorAll<HTMLElement>('[data-comment-id]')].find(
                 (item) => item.getBoundingClientRect().bottom > top + 1,
             );
-            return first
-                ? { id: first.dataset.commentId, offset: first.getBoundingClientRect().top - top }
-                : null;
+            // A retained continuation can regain its author header when older comments expire.
+            const element = first?.classList.contains('continued')
+                ? first.querySelector<HTMLElement>('.body')
+                : first;
+            return element ? { element, offset: element.getBoundingClientRect().top - top } : null;
         });
         untrack(() => {
             unread = following ? 0 : Math.min(current.length, unread + added);
@@ -107,13 +109,10 @@
             if (update !== revision || !viewport?.isConnected) return;
             if (following) moveTo(viewport.scrollHeight);
             else if (anchor) {
-                const item = [...viewport.querySelectorAll<HTMLElement>('[data-comment-id]')].find(
-                    (item) => item.dataset.commentId === anchor.id,
-                );
-                if (item)
+                if (anchor.element.isConnected)
                     moveTo(
                         viewport.scrollTop +
-                            item.getBoundingClientRect().top -
+                            anchor.element.getBoundingClientRect().top -
                             viewport.getBoundingClientRect().top -
                             anchor.offset,
                     );
@@ -155,8 +154,8 @@
         aria-describedby="feed-help"
     >
         <div class="comment-list">
-            {#each comments as comment (comment.id)}
-                <CommentItem {comment} />
+            {#each comments as comment, index (comment.id)}
+                <CommentItem {comment} previous={comments[index - 1]} />
             {/each}
         </div>
     </div>

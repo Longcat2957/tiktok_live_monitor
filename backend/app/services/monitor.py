@@ -6,6 +6,7 @@ from typing import Literal, Protocol
 from pydantic import ValidationError
 
 from ..config import RuntimeSettings, Settings
+from ..diagnostics import exception_location
 from ..realtime.broadcaster import WebSocketBroadcaster
 from ..schemas.events import FeedEvent, SourceName, Status
 from ..schemas.health import HealthResponse, QueueInfo
@@ -26,7 +27,12 @@ class EventStream(Protocol):
 def observe(task: asyncio.Task[None]) -> None:
     if not task.cancelled():
         if (error := task.exception()) is not None:
-            logger.error("Worker %s failed: %s", task.get_name(), type(error).__name__)
+            logger.error(
+                "Worker %s failed: %s at %s",
+                task.get_name(),
+                type(error).__name__,
+                exception_location(error),
+            )
 
 
 class MonitorService:
@@ -165,6 +171,7 @@ class MonitorService:
                 source, username = current.source, current.username
             updated = self.runtime_settings
             if action == "settings":
+                current_settings = updated
                 changes = settings or {}
                 irrelevant = (
                     {"mock_interval_seconds"}
@@ -177,6 +184,8 @@ class MonitorService:
                     updated = RuntimeSettings.model_validate(updated.model_dump() | changes)
                 except ValidationError:
                     raise InvalidSettingsError("설정값의 허용 범위를 확인해주세요.") from None
+                if updated == current_settings:
+                    return current
             if not await self._stop_session():
                 raise UnavailableError("이전 연결을 종료하지 못했습니다. 서버를 재시작해주세요.")
             if self.closed:
@@ -254,7 +263,11 @@ class MonitorService:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.error("Worker startup failed: %s", type(exc).__name__)
+                logger.error(
+                    "Worker startup failed: %s at %s",
+                    type(exc).__name__,
+                    exception_location(exc),
+                )
             finally:
                 stopped = await self._stop_workers()
             self.fault = "worker_stopped" if stopped else "shutdown_timeout"
@@ -275,6 +288,11 @@ class MonitorService:
     async def close(self) -> None:
         self.closed = True
         if self.commands:
-            await asyncio.wait(self.commands, timeout=STOP_TIMEOUT + 1)
-        await self._stop_session()
+            _, pending = await asyncio.wait(self.commands, timeout=STOP_TIMEOUT + 1)
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+        async with self.lock:
+            await self._stop_session()
         await self.broadcaster.close()

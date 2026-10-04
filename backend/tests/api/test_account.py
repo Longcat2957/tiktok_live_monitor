@@ -63,6 +63,23 @@ def test_account_lifecycle_settings_and_stale_requests(monkeypatch):
         monitor = app.state.monitor
         initial_source = monitor.stream_task
         before = client.get("/config").json()
+        unchanged = change(
+            client,
+            "PATCH",
+            "/config",
+            settings={
+                key: before[key]
+                for key in (
+                    "comment_history_size",
+                    "comment_queue_size",
+                    "mock_interval_seconds",
+                    "log_level",
+                )
+            },
+        )
+        assert unchanged.status_code == 200
+        assert unchanged.json()["session_id"] == before["session_id"]
+        assert monitor.stream_task is initial_source
         for invalid in [
             {"comment_history_size": 0},
             {"comment_queue_size": 10001},

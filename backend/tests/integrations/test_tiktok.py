@@ -6,6 +6,7 @@ from TikTokLive.client.errors import UserOfflineError
 from TikTokLive.events import CommentEvent
 
 from app.config import Settings
+from app.integrations import tiktok
 from app.integrations.tiktok import TikTokStream, parse_comment
 from app.realtime.broadcaster import WebSocketBroadcaster
 from app.schemas.events import Status
@@ -117,6 +118,45 @@ def test_comment_limits_and_no_payload_logging(caplog):
     )
     assert parse_comment(event) is None
     assert "secret" not in caplog.text
+
+
+def test_invalid_event_warnings_are_bounded(monkeypatch, caplog):
+    monkeypatch.setitem(tiktok._invalid_events, "comment", 0)
+    event = SimpleNamespace(user=None, comment="private event payload")
+    for _ in range(9):
+        assert parse_comment(event) is None
+    warnings = [record.message for record in caplog.records if "invalid comment" in record.message]
+    assert [int(message.split(": ")[1].split()[0]) for message in warnings] == [1, 2, 4, 8]
+    assert "private event payload" not in caplog.text
+
+
+async def test_unexpected_adapter_error_logs_location_without_payload(caplog):
+    manager = WebSocketBroadcaster(Status(source="tiktok", state="idle", message="test"))
+    source = TikTokStream(
+        EventSink(asyncio.Queue(10), manager),
+        Settings(_env_file=None, tiktok_reconnect_min_seconds=300, tiktok_reconnect_max_seconds=300),
+        "test",
+    )
+    fake = MagicMock()
+
+    async def failing_start(**_kwargs):
+        raise RuntimeError("private event payload")
+
+    fake.start = AsyncMock(side_effect=failing_start)
+    fake.disconnect = AsyncMock()
+    fake.web.close = AsyncMock()
+    with patch("app.integrations.tiktok.TikTokLiveClient", return_value=fake):
+        task = asyncio.create_task(source.run())
+        try:
+            async with asyncio.timeout(1):
+                while "Unexpected TikTok adapter failure" not in caplog.text:
+                    await asyncio.sleep(0.001)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    assert "RuntimeError at " in caplog.text
+    assert " in failing_start" in caplog.text
+    assert "private event payload" not in caplog.text
 
 
 async def test_upstream_cleanup_swallowing_cancel_cannot_restart_source():

@@ -6,7 +6,7 @@ import pytest
 from app.config import Settings
 from app.schemas.events import Comment, User
 from app.services.errors import ConflictError, UnavailableError
-from app.services.monitor import MonitorService
+from app.services.monitor import MonitorService, observe
 
 
 async def eventually(predicate, timeout=1):
@@ -46,6 +46,24 @@ async def test_concurrent_changes_only_one_wins_and_old_events_are_ignored():
         old_sink.publish(Comment(user=User(nickname="n", unique_id="u"), comment="old"))
         assert monitor.broadcaster.status == current
         assert not old_sink.active
+    finally:
+        await monitor.close()
+
+
+async def test_unchanged_settings_keep_the_current_session_and_workers():
+    monitor = make_monitor()
+    try:
+        await start(monitor)
+        status = monitor.broadcaster.status
+        queue, sink = monitor.queue, monitor.sink
+        supervisor, stream = monitor.supervisor_task, monitor.stream_task
+        assert await monitor.update_settings(status.session_id, {}) == status
+        assert await monitor.update_settings(
+            status.session_id,
+            {"comment_history_size": monitor.config.comment_history_size},
+        ) == status
+        assert monitor.queue is queue and monitor.sink is sink
+        assert monitor.supervisor_task is supervisor and monitor.stream_task is stream
     finally:
         await monitor.close()
 
@@ -158,6 +176,46 @@ async def test_shutdown_during_transition_never_starts_another_receiver():
         assert factory.call_count == 1
         assert monitor.stream_task is None
         assert not monitor.commands
+
+
+async def test_close_cancels_a_command_waiting_for_the_transition_lock():
+    monitor = make_monitor()
+    await monitor.lock.acquire()
+    closing = None
+    try:
+        request = asyncio.create_task(
+            monitor.start(monitor.broadcaster.status.session_id, source="mock")
+        )
+        await eventually(lambda: bool(monitor.commands))
+        with patch("app.services.monitor.STOP_TIMEOUT", 0.01):
+            closing = asyncio.create_task(monitor.close())
+            await eventually(request.done, timeout=2)
+            assert monitor.closed and not closing.done()
+            monitor.lock.release()
+            await asyncio.wait_for(closing, timeout=1)
+        result = (await asyncio.gather(request, return_exceptions=True))[0]
+        assert isinstance(result, asyncio.CancelledError)
+        assert not monitor.commands
+        assert monitor.supervisor_task is None
+    finally:
+        if monitor.lock.locked():
+            monitor.lock.release()
+        await asyncio.gather(request, return_exceptions=True)
+        if closing is not None:
+            await asyncio.gather(closing, return_exceptions=True)
+
+
+async def test_worker_failure_logs_location_without_exception_text(caplog):
+    async def broken():
+        raise RuntimeError("private event payload")
+
+    task = asyncio.create_task(broken(), name="test-worker")
+    task.add_done_callback(observe)
+    await asyncio.gather(task, return_exceptions=True)
+    await asyncio.sleep(0)
+    assert "RuntimeError at " in caplog.text
+    assert " in broken" in caplog.text
+    assert "private event payload" not in caplog.text
 
 
 async def test_runtime_logging_does_not_enable_dependency_debug():

@@ -1084,6 +1084,69 @@ test('viewport resizing follows the latest feed without moving a reader', async 
     await expect(page.locator('.reading-controls')).toBeVisible();
 });
 
+test('upward input on a short feed keeps following until there is room to read', async ({
+    page,
+}) => {
+    let send: (id: string) => void;
+    await page.routeWebSocket('**/ws', (socket) => {
+        socket.send(
+            JSON.stringify({
+                type: 'status',
+                source: 'mock',
+                state: 'connected',
+                message: '',
+                session_id: 'short-feed',
+                username: null,
+                comment_history_size: 30,
+            }),
+        );
+        send = (id) =>
+            socket.send(
+                JSON.stringify({
+                    type: 'comment',
+                    id,
+                    received_at: '2026-09-21T00:00:00Z',
+                    user: { nickname: '시청자', unique_id: `viewer-${id}` },
+                    comment: `댓글 ${id}`,
+                }),
+            );
+        send('0');
+    });
+    await page.setViewportSize({ width: 720, height: 800 });
+    await page.goto('/');
+    const viewport = page.getByRole('region', { name: '실시간 댓글과 활동', exact: true });
+    const controls = page.locator('.reading-controls');
+    const gap = () =>
+        viewport.evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop);
+    await expect(page.locator('.comment')).toHaveCount(1);
+    await expect.poll(gap).toBeLessThanOrEqual(1);
+
+    for (const key of ['ArrowUp', 'PageUp', 'Home']) {
+        await viewport.press(key);
+        await expect(controls).toHaveCount(0);
+    }
+    await viewport.dispatchEvent('wheel', { deltaY: -120 });
+    await expect(controls).toHaveCount(0);
+
+    for (let i = 1; i <= 24; i++) send!(String(i));
+    await expect(page.locator('.comment')).toHaveCount(25);
+    await expect
+        .poll(() => viewport.evaluate((node) => node.scrollHeight - node.clientHeight))
+        .toBeGreaterThan(2);
+    await expect.poll(gap).toBeLessThanOrEqual(1);
+    await expect(controls).toHaveCount(0);
+
+    await viewport.press('Home');
+    await expect(controls).toContainText('이전 댓글을 읽는 중');
+    await expect.poll(() => viewport.evaluate((node) => node.scrollTop)).toBe(0);
+    send!('25');
+    await expect(controls).toContainText('보관 중인 새 항목 1개');
+    await expect.poll(() => viewport.evaluate((node) => node.scrollTop)).toBe(0);
+    await page.getByRole('button', { name: '최신 댓글로', exact: true }).click();
+    await expect(controls).toHaveCount(0);
+    await expect.poll(gap).toBeLessThanOrEqual(1);
+});
+
 test('reading mode preserves its anchor, bounds unread items and resets across queued session changes', async ({
     page,
 }) => {

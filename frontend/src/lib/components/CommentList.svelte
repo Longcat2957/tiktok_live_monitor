@@ -59,6 +59,7 @@
         }[event.key];
         if (distance === undefined) return;
         event.preventDefault();
+        if (distance < 0 && viewport.scrollTop <= 0) return;
         if (
             distance > 0 &&
             viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 2
@@ -146,7 +147,8 @@
         onscroll={onScroll}
         onkeydown={onKeydown}
         onwheel={(event) => {
-            if (!event.ctrlKey && !event.metaKey && event.deltaY < 0) following = false;
+            if (!event.ctrlKey && !event.metaKey && event.deltaY < 0 && viewport.scrollTop > 0)
+                following = false;
         }}
         tabindex="0"
         role="region"

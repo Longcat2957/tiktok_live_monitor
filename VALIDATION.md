@@ -119,6 +119,8 @@
 
 ## 성능 측정
 
+백엔드 전달 경로: `cd backend && .venv/bin/python profile_pipeline.py`를 Linux x86_64 / Intel i9-14900HX에서 실행했다. 합성 댓글 5,000건을 목표 초당 500건으로 넣고 가짜 WebSocket 2개에서 JSON 직렬화까지 수행했다. 두 클라이언트가 각각 5,000건을 순서대로 받았고 소스 누락과 느린 연결 종료는 0건이었다. 소스·클라이언트 큐 최고 깊이는 각각 1건, 전달 지연 p50/p95/p99는 0.217/0.377/0.508ms였다. 이는 한 번의 로컬 실행 결과이며 TikTok 수신, 실제 네트워크 송신, Chromium 렌더링 및 Raspberry Pi 성능은 포함하지 않는다. `--profile`은 계측 코드까지 포함한 CPU 함수별 시간과 Python 힙 최고치를 추가하므로 일반 실행 수치와 직접 비교하지 않는다.
+
 실행: `cd frontend && pnpm build && pnpm benchmark ../docs/frontend-benchmark-local.json`.
 Python 가상환경과 Playwright Chromium을 사용한다. 스크립트가 임시 localhost 서버를 시작·종료하며 TikTok 연결 없이 브라우저 WebSocket에 샘플을 주입한다. 각 회차의 마지막 보관 항목 ID와 순서를 검사한다. 메모리 무제한 증가 방지는 목록과 대기 배치 상한으로 보장하며, 이 짧은 측정은 장시간 힙 측정을 대신하지 않는다.
 

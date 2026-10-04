@@ -23,10 +23,19 @@ from TikTokLive.events import (
 )
 
 from ..config import Settings
+from ..diagnostics import exception_location
 from ..schemas.events import Activity, Badge, Comment, LiveInfo, LiveState, SourceState, User
 from ..services.event_sink import EventSink
 
 logger = logging.getLogger(__name__)
+_invalid_events = {"comment": 0, "activity": 0}
+
+
+def _warn_invalid(kind: Literal["comment", "activity"]) -> None:
+    total = _invalid_events[kind] + 1
+    _invalid_events[kind] = total
+    if total & (total - 1) == 0:
+        logger.warning("Skipping invalid %s events: %d (payload omitted)", kind, total)
 
 
 def avatar_url(user: object) -> str | None:
@@ -85,7 +94,7 @@ def parse_comment(event: object) -> Comment | None:
             raise ValueError("empty comment")
         return Comment(user=parse_user(event), comment=body)
     except Exception:
-        logger.warning("Skipping invalid CommentEvent (payload omitted)")
+        _warn_invalid("comment")
         return None
 
 
@@ -109,7 +118,7 @@ def parse_activity(event: object) -> Activity | None:
         if isinstance(event, SubNotifyEvent):
             return Activity(kind="subscribe", user=parse_user(event))
     except Exception:
-        logger.warning("Skipping invalid activity (payload omitted)")
+        _warn_invalid("activity")
     return None
 
 
@@ -125,7 +134,7 @@ class TikTokStream:
         self.username = username
         self.live_info = LiveInfo()
         self.delay = settings.tiktok_reconnect_min_seconds
-        self.last_unexpected: type[Exception] | None = None
+        self.last_unexpected: tuple[type[Exception], str] | None = None
 
     def status(self, state: SourceState, message: str) -> None:
         self.sink.status(state, message)
@@ -214,9 +223,14 @@ class TikTokStream:
                 logger.warning("TikTok connection failed: %s", type(exc).__name__)
                 self.status("error", "TikTok 연결 실패 · 네트워크 또는 서비스 확인")
             except Exception as exc:
-                if self.last_unexpected is not type(exc):
-                    logger.error("Unexpected TikTok adapter failure: %s", type(exc).__name__)
-                    self.last_unexpected = type(exc)
+                failure = (type(exc), exception_location(exc))
+                if self.last_unexpected != failure:
+                    logger.error(
+                        "Unexpected TikTok adapter failure: %s at %s",
+                        failure[0].__name__,
+                        failure[1],
+                    )
+                    self.last_unexpected = failure
                 else:
                     logger.warning("Repeated TikTok adapter failure: %s", type(exc).__name__)
                 self.status("error", "방송 연결 오류 · 자동 재연결 대기")

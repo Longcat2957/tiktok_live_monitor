@@ -605,7 +605,7 @@ MVP 검증 이후에만 다음을 고려한다.
 - 모달에서는 모드·계정을 변경하지 않는다. 모니터 종료 후 첫 화면에서 선택·입력한다.
 - 공통 변경 항목: COMMENT_HISTORY_SIZE, COMMENT_QUEUE_SIZE, LOG_LEVEL. 실제 방송 설정에는 TIKTOK_RECONNECT_MIN_SECONDS, TIKTOK_RECONNECT_MAX_SECONDS만, 데모 설정에는 MOCK_INTERVAL_SECONDS만 추가한다. HOST, PORT, STATIC_DIR은 제외한다.
 - GET /config는 편집 가능한 현재 설정을 반환한다. PATCH /config의 settings 객체로 현재 모드·계정을 유지한 채 설정을 부분 적용한다. 모든 변경 요청은 현재 session_id를 필수로 포함한다. API와 환경변수는 같은 값 검증 규칙을 사용한다.
-- 취소/Escape는 변경하지 않는다. 적용 시 기존 source와 필요 시 queue consumer를 정리하고, 새 설정으로 큐·수신을 재시작한다. 댓글은 새 세션 경계에서 비운다.
+- 취소/Escape는 변경하지 않는다. 실제 설정값이 바뀐 적용 시 기존 source와 필요 시 queue consumer를 정리하고, 새 설정으로 큐·수신을 재시작한다. 댓글은 새 세션 경계에서 비운다. 동일한 설정값을 적용하면 세션과 댓글을 유지한다.
 - status.comment_history_size로 모든 브라우저의 보관량을 동기화한다. 설정 변경은 메모리 전용이며 백엔드 재시작 후 환경변수 초기값으로 복원된다.
 
 ## 재연결 후 댓글 범위

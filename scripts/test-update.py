@@ -14,6 +14,7 @@ def main():
         root = Path(directory)
         env = {
             **os.environ,
+            "XDG_CONFIG_HOME": str(root / "config"),
             "GIT_AUTHOR_NAME": "Update test",
             "GIT_AUTHOR_EMAIL": "test@example.invalid",
             "GIT_COMMITTER_NAME": "Update test",
@@ -29,6 +30,8 @@ def main():
         run("git", "init", "--bare", str(remote))
         run("git", "init", "--initial-branch=main", str(seed))
         (seed / "scripts").mkdir()
+        (seed / "deploy").mkdir()
+        shutil.copy2(ROOT / "deploy/repair-autostart.sh", seed / "deploy/repair-autostart.sh")
         for name in ("update.sh", "build.sh"):
             shutil.copy2(ROOT / "scripts" / name, seed / "scripts" / name)
         (seed / ".gitignore").write_text(".env\n")

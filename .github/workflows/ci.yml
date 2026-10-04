@@ -47,6 +47,9 @@ jobs:
       - name: Test update script with local Git repositories
         run: python3 scripts/test-update.py
 
+      - name: Test desktop autostart repair
+        run: python3 scripts/test-autostart.py
+
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: frontend/package.json

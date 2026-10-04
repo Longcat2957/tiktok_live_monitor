@@ -41,6 +41,7 @@ if ! docker info >/dev/null 2>&1; then
 fi
 docker compose build
 docker compose up -d --wait --wait-timeout 120
+bash "$PROJECT_ROOT/deploy/repair-autostart.sh"
 
 AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/labwc"
 AUTOSTART_FILE="$AUTOSTART_DIR/autostart"
@@ -49,9 +50,8 @@ mkdir -p "$AUTOSTART_DIR" "$STATE_DIR"
 if [[ ! -f "$AUTOSTART_FILE" ]] || ! grep -Fq '# tiktok-live-monitor kiosk' "$AUTOSTART_FILE"; then
   if [[ -f "$AUTOSTART_FILE" ]]; then
     cp -p "$AUTOSTART_FILE" "$AUTOSTART_FILE.backup.$(date +%Y%m%d%H%M%S)"
-  elif [[ -f /etc/xdg/labwc/autostart ]]; then
-    cp /etc/xdg/labwc/autostart "$AUTOSTART_FILE"
   fi
+  # Raspberry Pi's labwc-pi uses --merge-config; system autostart runs separately.
   # labwc reads shell commands. Single-quote arbitrary paths safely.
   quote() { local value="${1//\'/\'\\\'\'}"; printf "'%s'" "$value"; }
   {

@@ -43,6 +43,7 @@ main() {
     echo '배포 상태 확인 실패. 자동 롤백하지 않습니다. docker compose logs --tail=100 app으로 확인하세요.' >&2
     return 1
   fi
+  bash "$PROJECT_ROOT/deploy/repair-autostart.sh"
   # Also handle the previously deployed image from before we added the image label.
   current_image="$(docker compose images -q app)" || current_image=""
   if [[ -n "$previous_image" && -n "$current_image" && "$previous_image" != "$current_image" ]]; then

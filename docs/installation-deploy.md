@@ -49,7 +49,7 @@ nano .env
 ./scripts/install.sh
 ```
 
-설치 스크립트는 Docker/Compose/Chromium/labwc와 권한을 확인하고, Docker 부팅 시작, 이미지 빌드, Compose healthy 대기, labwc autostart 등록을 수행합니다. 전체 스크립트를 sudo로 실행하지 마세요. 기존 labwc autostart는 타임스탬프 백업을 남기고 마지막에 실행 항목을 추가합니다. 사용자 autostart가 없으면 시스템 autostart를 먼저 복사해 Desktop 기본 실행 항목을 보존합니다. 반복 실행 시 같은 항목을 중복 추가하지 않습니다. 저장소 경로를 옮겼다면 autostart의 기존 경로도 변경하세요.
+설치 스크립트는 Docker/Compose/Chromium/labwc와 권한을 확인하고, Docker 부팅 시작, 이미지 빌드, Compose healthy 대기, labwc autostart 등록을 수행합니다. 전체 스크립트를 sudo로 실행하지 마세요. 기존 labwc autostart는 타임스탬프 백업을 남기고 마지막에 실행 항목을 추가합니다. 사용자 autostart에는 앱 실행 항목만 추가합니다. Pi의 `labwc-pi`는 시스템과 사용자 설정을 함께 실행하므로 시스템 autostart를 복사하면 작업 표시줄 등 Desktop 프로그램이 중복 실행됩니다. 반복 실행 시 같은 항목을 중복 추가하지 않습니다. 저장소 경로를 옮겼다면 autostart의 기존 경로도 변경하세요.
 
 5. `sudo raspi-config`에서 Desktop 자동 로그인을 활성화하고 화면 blanking을 비활성화합니다. Wayland/labwc Desktop 세션을 사용합니다. 자동 로그인 사용자는 설치 스크립트를 실행한 사용자와 같아야 합니다.
 6. Desktop의 디스플레이 설정(버전에 따라 Screen Configuration 또는 Control Centre → Screens)에서 HDMI 출력 방향을 **90도 또는 270도**로 변경하고 적용·저장합니다. CSS 회전은 없습니다. 1080×1920 viewport가 나오도록 모니터 설치 방향에 맞춰 선택합니다. [Raspberry Pi 디스플레이 설정 문서](https://www.raspberrypi.com/documentation/computers/configuration.html)를 참고하세요.
@@ -98,6 +98,19 @@ cd ~/tiktok_live_monitor
 - 마지막에 `docker system df`로 이미지·컨테이너·볼륨·빌드 캐시 사용량을 출력합니다. 공유 빌드 캐시, 다른 앱의 이미지, 볼륨, 소스·`.env`·Chromium 프로필은 자동 삭제하지 않습니다. 더 오래된 무라벨 이미지도 소유자를 확정할 수 없어 자동 삭제하지 않습니다. 정리 실패는 경고로 표시하며 성공한 배포를 실패로 바꾸지는 않습니다.
 
 기존의 재빌드 전용 `update.sh`를 사용 중이라면 최초 한 번은 `git pull --ff-only`로 새 스크립트를 받아야 합니다. 이후부터는 `./scripts/update.sh`만 실행합니다.
+
+### 작업 표시줄이 두 개 뜨는 구버전 설치 복구
+
+구버전 설치 스크립트가 복사한 시스템 autostart 때문에 발생할 수 있습니다. 새 설치·업데이트 스크립트는 앱 표시가 있는 사용자 autostart의 시작 부분이 현재 시스템 파일과 정확히 같을 때만 백업 후 그 복사본을 제거합니다. 앱과 추가 사용자 명령은 유지합니다. 수정된 소스를 받은 뒤 Docker 재빌드 없이 복구만 실행할 수도 있습니다.
+
+```bash
+cd ~/tiktok_live_monitor
+bash deploy/repair-autostart.sh
+```
+
+복구 메시지가 나오면 방송 종료 후 로그아웃·로그인하거나 재부팅하세요. 이미 실행된 작업 표시줄은 설정 수정만으로 종료되지 않습니다. OS 업데이트나 직접 편집으로 두 파일의 내용이 달라졌다면 자동 수정하지 않습니다. 이 경우 `~/.config/labwc/autostart`를 백업한 뒤 `/etc/xdg/labwc/autostart`와 비교하여 중복된 Desktop 실행 명령만 제거하고 앱 실행 항목과 사용자 설정은 보존하세요.
+
+### 운영 명령
 
 ```bash
 docker compose ps

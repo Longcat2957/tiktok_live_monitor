@@ -3,7 +3,7 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if [[ "${1:-}" == --help ]]; then
+if [[ "${1:-}" == --help && $# == 1 ]]; then
   cat <<'EOF'
 사용법: ./scripts/dev.sh
 Linux 데스크톱에서 의존성 설치 → 개발 서버 → Chromium 실행.

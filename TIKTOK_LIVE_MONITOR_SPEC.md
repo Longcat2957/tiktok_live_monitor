@@ -190,6 +190,7 @@ tiktok-live-monitor/
 │   └── wait-for-app.sh
 ├── scripts/
 │   ├── install.sh
+│   ├── start.sh
 │   ├── build.sh
 │   └── update.sh
 ├── Dockerfile
@@ -393,6 +394,8 @@ CSS `transform: rotate(90deg)`로 페이지를 회전하지 않는다. Raspberry
 
 ### 운영 빌드
 
+기본 운영은 `scripts/start.sh`가 Docker Hub의 AMD64/ARM64 통합 이미지를 받아 실행한다. `.env`의 `MONITOR_IMAGE`로 `latest`, 발행된 전체 커밋 SHA 태그 또는 digest를 선택한다. 문서·스크립트만 바꾸고 CI를 건너뛴 커밋에는 이미지가 없으므로 현재 Git HEAD의 SHA 태그를 자동으로 추정하지 않는다. 다운로드에 실패하면 컨테이너를 교체하지 않는다. `scripts/start.sh --build`는 registry 없이 현재 소스를 로컬 이미지로 빌드·실행하며 다음 과정을 따른다.
+
 1. `docker compose build`가 multi-stage Dockerfile을 빌드한다.
 2. Node build stage에서 `pnpm install --frozen-lockfile`과 SvelteKit 정적 빌드를 수행한다.
 3. Python runtime stage에서 backend 의존성을 설치하고 `frontend/build` 결과만 복사한다.
@@ -439,7 +442,7 @@ Docker daemon 자체는 OS 부팅 시 시작되도록 `sudo systemctl enable --n
 
 ### 업데이트 스크립트
 
-`scripts/update.sh`는 현재 브랜치의 upstream에서 `git pull --ff-only` 후 이미지 빌드와 Compose 교체, 최대 120초 healthy 대기를 수행한다. 미커밋 변경·추적하지 않는 파일, `.env` 누락, upstream 미설정 또는 분기된 Git 이력은 중단한다. `.env`는 보존하고 자동 stash/reset/merge는 하지 않는다. 빌드 실패 시 기존 컨테이너를 유지하며 교체 후 자동 롤백은 구현하지 않는다. 방송 종료 후 실행하고 CI 통과 여부는 운영자가 먼저 확인한다. 정상 배포 후 앱 라벨(`org.opencontainers.image.title=tiktok-live-monitor`)이 있는 태그 없는 미사용 이미지를 정리하며 라벨 도입 전의 직전 앱 이미지도 태그가 없을 때 강제 옵션 없이 삭제한다. 사용 중·별도 태그 이미지는 보존한다. 빌드·health 실패 시 정리하지 않으며 정리 실패는 경고로 처리한다. 공유 빌드 캐시·볼륨은 삭제하지 않고 `docker system df`로 사용량을 표시한다. `python3 scripts/test-update.py`는 로컬 임시 Git 저장소와 가짜 Docker로 업데이트·중단 경로를 검사한다.
+`scripts/update.sh`는 현재 브랜치의 upstream에서 `git pull --ff-only` 후 `scripts/start.sh`로 이미지 다운로드와 Compose 교체, 최대 120초 healthy 대기를 수행한다. `--build`를 지정하면 다운로드 대신 로컬 소스를 빌드한다. 미커밋 변경·추적하지 않는 파일, `.env` 누락, upstream 미설정 또는 분기된 Git 이력은 중단한다. `.env`는 보존하고 자동 stash/reset/merge는 하지 않는다. 다운로드·빌드 실패 시 기존 컨테이너를 유지하며 교체 후 자동 롤백은 구현하지 않는다. 방송 종료 후 실행하고 앱 변경 커밋의 CI 발행 성공 여부는 운영자가 먼저 확인한다. 정상 배포 후 앱 라벨(`org.opencontainers.image.title=tiktok-live-monitor`)이 있는 태그 없는 미사용 이미지를 정리하며 라벨 도입 전의 직전 앱 이미지도 태그가 없을 때 강제 옵션 없이 삭제한다. 사용 중·별도 태그 이미지는 보존한다. 다운로드·빌드·health 실패 시 정리하지 않으며 정리 실패는 경고로 처리한다. 공유 빌드 캐시·볼륨은 삭제하지 않고 `docker system df`로 사용량을 표시한다. `python3 scripts/test-update.py`는 로컬 임시 Git 저장소와 가짜 Docker로 업데이트·중단 경로를 검사한다.
 
 ### Chromium kiosk
 
@@ -465,7 +468,7 @@ chromium http://127.0.0.1:8000
 - 현재 사용자가 Docker를 실행할 권한이 있는지 확인하고 필요한 설정 안내
 - `.env`가 없을 때 `.env.example` 복사 후 기본값 사용 또는 설정 수정 안내
 - Docker daemon enable/start
-- `docker compose build`와 `docker compose up -d` 실행
+- `scripts/start.sh`로 이미지 다운로드와 healthy 대기 실행. `--build`에서는 직접 빌드
 - labwc autostart 설치 또는 설치 명령 안내
 
 사용자 파일을 덮어쓸 가능성이 있는 작업은 백업하거나 확인을 요구한다. 설치 스크립트를 여러 번 실행해도 치명적인 중복 설정이 생기지 않게 가능한 범위에서 idempotent하게 만든다.
@@ -533,7 +536,8 @@ README에는 실제 프로젝트 경로와 서비스명을 기준으로 다음 �
 docker compose ps
 docker compose logs -f app
 docker compose restart app
-docker compose up -d --build
+./scripts/start.sh
+./scripts/update.sh
 curl http://127.0.0.1:8000/health
 ```
 

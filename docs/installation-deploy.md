@@ -7,8 +7,9 @@ Raspberry Pi 4 + Raspberry Pi OS Desktop 64-bit용입니다. 아래 명령은 Pi
 - 인터넷에 연결된 Pi 4, 세로 모니터, 키보드·마우스 또는 터치 입력, Desktop 사용자 계정이 필요합니다.
 - Docker Compose가 FastAPI와 빌드된 Svelte UI를 컨테이너 하나로 실행합니다.
 - Chromium은 호스트에서 실행하며 `http://127.0.0.1:8000`에 접속합니다. 다른 PC에서 Pi의 IP로 접근하는 구성은 아닙니다.
-- Pi가 소스를 직접 빌드합니다. 호스트에 Python/uv/Node/pnpm을 설치할 필요는 없습니다.
-- GitHub Actions는 `dev`에서 Frontend CI·Backend CI로 코드·브라우저 테스트를 각각 실행합니다. `main`의 Docker CI는 AMD64/ARM64 운영 컨테이너 빌드·실행을 검증하고 `main` 푸시에서 이미지를 Docker Hub의 `longcat1132/tiktok-live-monitor`에 발행합니다. [태그와 인증 설정](../README.md#github-actions-ci)을 참고하세요. 아래 Pi 설치·업데이트 스크립트는 소스를 직접 빌드하며 자동 배포는 수행하지 않습니다.
+- 기본 설치는 공개 Docker Hub의 `longcat1132/tiktok-live-monitor:latest`를 다운로드합니다. Pi 64-bit에는 ARM64 이미지가 선택되며 Docker Hub 로그인은 필요 없습니다. 호스트에 Python/uv/Node/pnpm을 설치할 필요도 없습니다.
+- GitHub Actions는 `dev`에서 Frontend CI·Backend CI로 코드·브라우저 테스트를 각각 실행합니다. `main`의 Docker CI는 AMD64/ARM64 운영 컨테이너 빌드·실행을 검증한 뒤 이미지를 발행합니다. Pi에서는 설치·업데이트 스크립트를 직접 실행합니다. [태그와 CI 설정](reference.md#github-actions-ci)을 참고하세요.
+- 필요한 경우 `--build`로 현재 소스를 Pi에서 직접 빌드할 수 있습니다.
 - 댓글은 영구 저장하지 않습니다. 컨테이너는 non-root, 읽기 전용 루트 파일시스템으로 실행됩니다.
 
 ## 2. 장비 설치
@@ -40,20 +41,18 @@ sudo usermod -aG docker "$USER"
 4. Desktop에 자동 로그인할 일반 사용자로 저장소를 복제합니다. 이미 복제했다면 `git clone`은 생략합니다.
 
 ```bash
-git clone https://github.com/Longcat2957/tiktok_live_monitor.git ~/tiktok_live_monitor
+git clone --branch main https://github.com/Longcat2957/tiktok_live_monitor.git ~/tiktok_live_monitor
 cd ~/tiktok_live_monitor
-./scripts/install.sh
-# 최초 실행은 .env를 만들고 종료합니다.
-nano .env
-# 기본값 그대로 사용 가능. 방송·데모는 실행 후 화면에서 선택
 ./scripts/install.sh
 ```
 
-설치 스크립트는 Docker/Compose/Chromium/labwc와 권한을 확인하고, Docker 부팅 시작, 이미지 빌드, Compose healthy 대기, labwc autostart 등록을 수행합니다. 전체 스크립트를 sudo로 실행하지 마세요. 기존 labwc autostart는 타임스탬프 백업을 남기고 마지막에 실행 항목을 추가합니다. 사용자 autostart에는 앱 실행 항목만 추가합니다. Pi의 `labwc-pi`는 시스템과 사용자 설정을 함께 실행하므로 시스템 autostart를 복사하면 작업 표시줄 등 Desktop 프로그램이 중복 실행됩니다. 반복 실행 시 같은 항목을 중복 추가하지 않습니다. 저장소 경로를 옮겼다면 autostart의 기존 경로도 변경하세요.
+설치 스크립트는 Docker/Compose/Chromium/labwc와 권한을 확인하고, Docker 부팅 시작, 이미지 다운로드, Compose healthy 대기, labwc autostart 등록을 수행합니다. `.env`가 없으면 기본값으로 만들고 같은 실행에서 설치를 완료합니다. 설정을 먼저 바꾸려면 `.env.example`을 `.env`로 복사해 수정한 뒤 실행하세요. 기존 `.env`는 보존하며 방송·데모는 화면에서 선택합니다.
+
+전체 스크립트를 sudo로 실행하지 마세요. 기존 labwc autostart는 타임스탬프 백업을 남기고 마지막에 실행 항목을 추가합니다. 사용자 autostart에는 앱 실행 항목만 추가합니다. Pi의 `labwc-pi`는 시스템과 사용자 설정을 함께 실행하므로 시스템 autostart를 복사하면 작업 표시줄 등 Desktop 프로그램이 중복 실행됩니다. 반복 실행 시 같은 항목을 중복 추가하지 않습니다. 저장소 경로를 옮겼다면 autostart의 기존 경로도 변경하세요.
 
 5. `sudo raspi-config`에서 Desktop 자동 로그인을 활성화하고 화면 blanking을 비활성화합니다. Wayland/labwc Desktop 세션을 사용합니다. 자동 로그인 사용자는 설치 스크립트를 실행한 사용자와 같아야 합니다.
 6. Desktop의 디스플레이 설정(버전에 따라 Screen Configuration 또는 Control Centre → Screens)에서 HDMI 출력 방향을 **90도 또는 270도**로 변경하고 적용·저장합니다. CSS 회전은 없습니다. 1080×1920 viewport가 나오도록 모니터 설치 방향에 맞춰 선택합니다. [Raspberry Pi 디스플레이 설정 문서](https://www.raspberrypi.com/documentation/computers/configuration.html)를 참고하세요.
-7. 재부팅합니다. Docker가 기존 컨테이너를 복구하고 labwc 로그인 후 kiosk가 실행됩니다. health와 UI 응답을 기다리므로 초기 빌드나 네트워크 복구에 시간이 걸려도 3초 간격으로 계속 대기합니다. 대기 로그는 30초 간격입니다.
+7. 재부팅합니다. Docker가 기존 컨테이너를 복구하고 labwc 로그인 후 kiosk가 실행됩니다. health와 UI 응답을 기다리므로 서비스 준비나 네트워크 복구에 시간이 걸려도 3초 간격으로 계속 대기합니다. 대기 로그는 30초 간격입니다.
 
 수동 kiosk 확인:
 
@@ -81,23 +80,48 @@ curl --fail --output /dev/null http://127.0.0.1:8000/
 
 ## 4. 업데이트와 운영
 
-방송이 끝난 뒤 실행하세요. 로컬 변경이 있다면 먼저 커밋하거나 별도로 보관합니다. GitHub의 업데이트 대상 커밋에서 dev의 Frontend CI·Backend CI와 main의 Docker CI가 모두 통과했는지 확인하세요. 스크립트가 CI 통과 여부를 대신 검사하지는 않습니다.
+방송이 끝난 뒤 실행하세요. 로컬 변경이 있다면 먼저 커밋하거나 별도로 보관합니다. GitHub에서 dev의 Frontend CI·Backend CI와 발행 대상 main의 Docker CI 결과를 확인하세요. 스크립트가 CI 통과 여부를 대신 검사하지는 않습니다.
 
 ```bash
 cd ~/tiktok_live_monitor
 ./scripts/update.sh
 ```
 
-스크립트는 현재 브랜치의 upstream에서 `git pull --ff-only`로 소스를 받은 뒤 이미지를 빌드하고 컨테이너를 교체하며 최대 120초 동안 healthy를 기다립니다. 일반 설치의 upstream은 `origin/main`입니다. 어느 디렉터리에서든 스크립트의 절대 경로로 실행할 수 있습니다. `--help`로 사용법을 확인합니다.
+스크립트는 현재 브랜치의 upstream에서 `git pull --ff-only`로 소스를 받은 뒤 `start.sh`로 운영 이미지를 다운로드하고 컨테이너를 교체하며 최대 120초 동안 healthy를 기다립니다. 일반 설치의 upstream은 `origin/main`입니다. 어느 디렉터리에서든 스크립트의 절대 경로로 실행할 수 있습니다. `--help`로 사용법을 확인합니다.
+
+기본 `latest`는 마지막으로 발행에 성공한 이미지입니다. 문서·스크립트 커밋에 `[skip ci]`를 사용하면 소스의 최신 커밋과 이미지의 발행 커밋이 다를 수 있습니다. 스크립트는 현재 Git HEAD의 이미지 태그를 만들어 조회하지 않습니다.
 
 - 미커밋 변경(추적하지 않는 파일 포함), `.env` 누락, upstream 미설정, Git 이력 분기가 있으면 배포를 중단합니다. 자동 stash·reset·merge는 하지 않습니다.
-- Git에서 제외된 `.env`는 보존합니다. 빌드 실패 시 기존 컨테이너를 교체하지 않으며, 소스는 이미 새 커밋으로 이동했을 수 있습니다.
+- Git에서 제외된 `.env`는 보존합니다. 다운로드·빌드 실패 시 기존 컨테이너를 교체하지 않으며, 소스는 이미 새 커밋으로 이동했을 수 있습니다.
 - 교체 중에는 잠시 연결이 끊기며 UI가 자동 재연결합니다. 운영 화면은 30초마다 UI 빌드 버전을 확인하고 새 버전일 때만 페이지를 다시 불러옵니다. 서버 단절·버전 확인 실패·같은 버전에는 새로고침하지 않습니다. 이 기능이 없는 구버전 화면은 최초 한 번 Chromium에서 **Ctrl+Shift+R**로 새로고침하세요. 컨테이너가 교체됐다면 첫 화면에서 모드·계정을 선택하고 다시 시작합니다.
 - healthy 확인 실패는 오류로 종료합니다. 자동 롤백은 없으므로 로그를 확인하고 원인을 해결한 뒤 다시 실행합니다.
-- healthy 확인에 성공한 뒤 이 앱의 라벨(`org.opencontainers.image.title=tiktok-live-monitor`)이 붙은 태그 없는 미사용 이미지를 정리합니다. 라벨 도입 전 이미지도 이번 교체 직전에 앱이 사용하던 이미지라면 태그가 없을 때 삭제를 시도합니다. 이전 이미지가 조회되지 않으면 삭제를 건너뜁니다. 컨테이너가 사용하는 이미지와 별도 태그로 보관한 이미지는 유지합니다. 빌드·health 실패 시에는 정리하지 않습니다.
+- healthy 확인에 성공한 뒤 이 앱의 라벨(`org.opencontainers.image.title=tiktok-live-monitor`)이 붙은 태그 없는 미사용 이미지를 정리합니다. 라벨 도입 전 이미지도 이번 교체 직전에 앱이 사용하던 이미지라면 태그가 없을 때 삭제를 시도합니다. 이전 이미지가 조회되지 않으면 삭제를 건너뜁니다. 컨테이너가 사용하는 이미지와 별도 태그로 보관한 이미지는 유지합니다. 다운로드·빌드·health 실패 시에는 정리하지 않습니다.
 - 마지막에 `docker system df`로 이미지·컨테이너·볼륨·빌드 캐시 사용량을 출력합니다. 공유 빌드 캐시, 다른 앱의 이미지, 볼륨, 소스·`.env`·Chromium 프로필은 자동 삭제하지 않습니다. 더 오래된 무라벨 이미지도 소유자를 확정할 수 없어 자동 삭제하지 않습니다. 정리 실패는 경고로 표시하며 성공한 배포를 실패로 바꾸지는 않습니다.
 
 기존의 재빌드 전용 `update.sh`를 사용 중이라면 최초 한 번은 `git pull --ff-only`로 새 스크립트를 받아야 합니다. 이후부터는 `./scripts/update.sh`만 실행합니다.
+
+### 직접 실행, 버전 고정과 로컬 빌드
+
+Docker만 사용하는 호스트에서는 `./scripts/start.sh`로 이미지 다운로드·실행을 할 수 있습니다. Pi의 Desktop 자동 실행 설정은 `install.sh`가 담당합니다.
+
+발행된 특정 버전을 유지하려면 `.env`의 `MONITOR_IMAGE`를 전체 커밋 SHA 태그 또는 이미지 digest로 지정합니다. 예를 들어 v1.0.0 소스의 발행 이미지는 다음과 같습니다.
+
+```dotenv
+MONITOR_IMAGE=longcat1132/tiktok-live-monitor:sha-ae78f7a27796f6187fcdb9ef70a1c64be1ff502e
+```
+
+수정 후 `./scripts/start.sh`로 적용합니다. 고정 중에는 `update.sh`도 같은 이미지를 사용합니다. 최신 발행 이미지를 다시 받으려면 값을 `longcat1132/tiktok-live-monitor:latest`로 되돌리세요.
+
+현재 소스를 직접 빌드하려면 다음 명령을 사용합니다. 기본 로컬 태그는 `tiktok-live-monitor:local`이며 `.env`의 운영 이미지 지정은 유지합니다.
+
+```bash
+./scripts/build.sh          # 빌드만 수행
+./scripts/start.sh --build  # 빌드 후 실행
+./scripts/install.sh --build # Pi 자동 실행 설치까지 수행
+./scripts/update.sh --build # Git 업데이트 후 빌드·실행
+```
+
+별도 로컬 태그가 필요하면 `MONITOR_IMAGE=tiktok-live-monitor:custom ./scripts/start.sh --build`처럼 셸 환경변수로 지정합니다. 로컬 빌드는 의존성·기본 이미지 다운로드에 네트워크가 필요할 수 있습니다.
 
 ### 작업 표시줄이 두 개 뜨는 구버전 설치 복구
 
@@ -120,9 +144,15 @@ curl --fail http://127.0.0.1:8000/health
 tail -f ~/.local/state/tiktok-live-monitor/kiosk.log
 ```
 
-수동 중지에는 `docker compose stop`, 재시작에는 `docker compose up -d --wait`를 사용합니다. 수동 중지한 컨테이너는 재부팅만으로 복구되지 않습니다. `unless-stopped`는 프로세스 종료를 복구하며 unhealthy 판정만으로 재시작하지 않습니다.
+수동 중지에는 `docker compose stop`을 사용합니다. 이미 내려받은 운영 이미지를 네트워크 접속 없이 다시 실행하려면 다음 명령을 사용합니다.
 
-설치/업데이트가 실패하면 최초 오류와 `docker compose logs --tail=100 app`을 확인합니다. Docker 권한 변경 후에는 다시 로그인하고, Chromium은 Desktop 세션에서 실행하세요. 더 자세한 진단은 [README의 장애 진단](../README.md#장애-진단)을 참고하세요.
+```bash
+docker compose up -d --no-build --pull never --wait --wait-timeout 120
+```
+
+로컬 빌드 이미지를 다시 실행할 때는 앞에 `MONITOR_IMAGE=tiktok-live-monitor:local`을 붙입니다. 수동 중지한 컨테이너는 재부팅만으로 복구되지 않습니다. `unless-stopped`는 프로세스 종료를 복구하며 unhealthy 판정만으로 재시작하지 않습니다.
+
+설치/업데이트가 실패하면 최초 오류와 `docker compose logs --tail=100 app`을 확인합니다. Docker 권한 변경 후에는 다시 로그인하고, Chromium은 Desktop 세션에서 실행하세요. 더 자세한 진단은 [장애 진단](reference.md#장애-진단)을 참고하세요.
 
 ## 5. 현장 인수 확인
 
@@ -131,4 +161,4 @@ tail -f ~/.local/state/tiktok-live-monitor/kiosk.log
 - 컨테이너 재시작 후 새로고침 없이 첫 화면으로 돌아가며, 시작을 누르면 댓글이 다시 들어오는지 확인합니다.
 - 실제 TikTok LIVE에서 닉네임과 댓글 순서를 확인합니다.
 
-기존 [검증 기록](../VALIDATION.md)은 x86 Docker와 mock 동작 기준입니다. 실제 Pi ARM64 빌드·실행, 전원 재인가 자동 복구, 실제 LIVE 수신은 현장에서 별도 검증해야 합니다.
+기존 [검증 기록](../VALIDATION.md)은 x86 Docker와 mock 동작 기준입니다. CI는 AMD64·ARM64 컨테이너를 각각 검증합니다. 실제 Pi 장비 실행, 전원 재인가 자동 복구, 실제 LIVE 수신은 현장에서 별도 검증해야 합니다.

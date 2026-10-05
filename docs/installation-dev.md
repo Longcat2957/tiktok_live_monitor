@@ -47,14 +47,14 @@ pnpm --version
 ## 2. 저장소와 설정 준비
 
 ```bash
-git clone https://github.com/Longcat2957/tiktok_live_monitor.git ~/tiktok_live_monitor
+git clone --branch dev https://github.com/Longcat2957/tiktok_live_monitor.git ~/tiktok_live_monitor
 cd ~/tiktok_live_monitor
 test -f .env || cp .env.example .env
 ```
 
 기본값으로 실행할 수 있으며 필요한 경우 큐 크기·보관 수·재연결 간격만 수정합니다. 기존 설정 파일은 덮어쓰지 않습니다. 실제 방송·데모는 환경변수가 아니라 화면에서 선택합니다. 기존 `.env`의 `COMMENT_SOURCE`는 더 이상 사용하지 않으므로 삭제하세요.
 
-`.env`는 Git에서 제외되며, 지원하는 설정은 셸 환경변수가 `.env`보다 우선합니다.
+`.env`는 Git에서 제외되며, 지원하는 설정은 셸 환경변수가 `.env`보다 우선합니다. `MONITOR_IMAGE`는 Docker 운영 이미지 선택에만 사용하며 개발 서버에는 영향을 주지 않습니다.
 
 ## 3. 의존성 설치
 
@@ -125,7 +125,7 @@ curl --fail http://127.0.0.1:8000/health
 
 ## 5. 검사와 빌드
 
-CI의 코드 검사와 같은 명령입니다. 이어서 브라우저 E2E와 운영 컨테이너 검사도 실행합니다.
+`dev`의 Backend CI와 Frontend CI는 서로 분리되어 실행됩니다. 아래는 각 CI의 코드 검사와 같은 명령입니다. `main`의 Docker CI는 운영 컨테이너 검증과 Docker Hub 발행을 담당합니다.
 
 ```bash
 cd ~/tiktok_live_monitor/backend
@@ -161,7 +161,7 @@ pnpm test:e2e
 
 E2E는 `18765`, `18768`에 테스트용 백엔드(테스트가 데모를 명시적으로 시작), `18766`에 Vite 프록시를 실행하고 종료하므로 해당 포트를 비워두세요. 정적 빌드는 `frontend/build`에 생성됩니다. 빌드 후 개발 백엔드를 재시작하면 `http://127.0.0.1:8000`에서도 UI를 확인할 수 있습니다.
 
-Docker가 설치되어 있다면 저장소 루트에서 `./scripts/test-container.sh`로 운영 이미지 빌드·실행까지 확인합니다. Compose 2.24.4 이상과 curl이 필요하며 임시 localhost 포트·별도 프로젝트를 사용합니다. 이 검사는 `.env`나 실행 중인 모니터를 변경하지 않습니다. CI는 AMD64와 ARM64에서 각각 실행합니다.
+Docker가 설치되어 있다면 저장소 루트에서 `./scripts/test-container.sh`로 운영 이미지 빌드·실행까지 확인합니다. Compose 2.24.4 이상과 curl이 필요하며 임시 localhost 포트·별도 프로젝트를 사용합니다. 이 검사는 `.env`나 실행 중인 모니터를 변경하지 않습니다. `main`의 Docker CI는 AMD64와 ARM64에서 각각 실행합니다. 평소 개발에는 `dev.sh`를 사용하고, 현재 소스의 운영 동작은 `./scripts/start.sh --build`로 확인합니다.
 
 ## 6. 소스 업데이트
 
@@ -175,5 +175,7 @@ uv sync --locked
 cd ../frontend
 pnpm install --frozen-lockfile
 ```
+
+개발 변경은 `dev`에 커밋하고 두 CI 결과를 확인한 뒤 `main`에 반영합니다. 문서·배포 스크립트만 변경하는 커밋은 로컬 검증 후 `[skip ci]`로 CI를 생략할 수 있습니다. 이때 Docker Hub의 이미지는 재발행되지 않습니다. `scripts/update.sh`는 Docker 운영 환경용이며 개발 서버의 의존성 갱신은 위 명령 또는 `dev.sh`의 다음 실행에서 처리합니다.
 
 실제 방송을 시험하려면 화면에서 **모니터 종료 · 처음으로 → 실제 방송**을 선택한 뒤 @아이디 또는 TikTok 프로필·LIVE 주소를 입력하고 시작합니다. `.env` 수정이나 서버 재시작은 필요하지 않습니다. 실제 장비 설치는 [배포 환경 설치 가이드](installation-deploy.md)를 참고하세요.

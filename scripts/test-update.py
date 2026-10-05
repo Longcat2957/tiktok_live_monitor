@@ -32,8 +32,10 @@ def main():
         (seed / "scripts").mkdir()
         (seed / "deploy").mkdir()
         shutil.copy2(ROOT / "deploy/repair-autostart.sh", seed / "deploy/repair-autostart.sh")
-        for name in ("update.sh", "build.sh"):
+        for name in ("update.sh", "start.sh", "build.sh"):
             shutil.copy2(ROOT / "scripts" / name, seed / "scripts" / name)
+        for name in ("compose.yaml", ".env.example"):
+            shutil.copy2(ROOT / name, seed / name)
         (seed / ".gitignore").write_text(".env\n")
         run("git", "add", ".", cwd=seed)
         run("git", "commit", "-m", "Initial", cwd=seed)
@@ -55,11 +57,11 @@ def main():
             'if [[ "$*" == "${UPDATE_TEST_FAIL:-never}" ]]; then exit 7; fi\n'
             'case "$*" in\n'
             '  "compose images -q app")\n'
-            '    if [[ -f "$UPDATE_TEST_DEPLOYED" ]]; then echo sha256:new;\n'
+            '    if [[ -f "$UPDATE_TEST_DEPLOYED" && "$(cat "$UPDATE_TEST_DEPLOYED")" == new ]]; then echo sha256:new;\n'
             '    else echo "${UPDATE_TEST_PREVIOUS_IMAGE-sha256:old}"; fi ;;\n'
             '  "image inspect --format {{len .RepoTags}} sha256:old")\n'
             '    echo "${UPDATE_TEST_TAGS:-0}" ;;\n'
-            '  "compose up -d --wait --wait-timeout 120") touch "$UPDATE_TEST_DEPLOYED" ;;\n'
+            '  "compose up -d --no-build --pull never --wait --wait-timeout 120") printf new > "$UPDATE_TEST_DEPLOYED" ;;\n'
             "esac\n"
         )
         docker.chmod(0o755)
@@ -69,9 +71,12 @@ def main():
             UPDATE_TEST_DEPLOYED=str(deployed),
         )
 
-        def update(success, *args):
+        def update(success, *args, deployed_before=None):
             log.write_text("")
-            deployed.unlink(missing_ok=True)
+            if deployed_before is None:
+                deployed.unlink(missing_ok=True)
+            else:
+                deployed.write_text(deployed_before)
             result = run("bash", str(checkout / "scripts/update.sh"), *args, check=False)
             assert (result.returncode == 0) == success, result.stdout + result.stderr
             assert settings.read_bytes() == original_settings
@@ -79,6 +84,7 @@ def main():
 
         assert update(True, "--help") == []
         assert update(False, "--unknown") == []
+        assert update(False, "--build", "--help") == []
         (checkout / "untracked.txt").write_text("keep me")
         assert update(False) == []
         assert (checkout / "untracked.txt").read_text() == "keep me"
@@ -96,9 +102,11 @@ def main():
         assert update(False) == []
         run("git", "checkout", "main", cwd=checkout)
 
-        # Pull changes to the running script itself and use the updated build script.
+        # Pull changes to the running script itself and use the updated start/build scripts.
         with (seed / "scripts/update.sh").open("a") as script:
             script.write("\n# New remote revision\n")
+        with (seed / "scripts/start.sh").open("a") as script:
+            script.write("\ndocker updated-start\n")
         with (seed / "scripts/build.sh").open("a") as script:
             script.write("\ndocker updated-build\n")
         run("git", "add", ".", cwd=seed)
@@ -109,9 +117,12 @@ def main():
             "compose version",
             "info",
             "compose images -q app",
-            "compose build",
-            "updated-build",
-            "compose up -d --wait --wait-timeout 120",
+            "compose version",
+            "info",
+            "compose config --quiet",
+            "compose pull app",
+            "compose up -d --no-build --pull never --wait --wait-timeout 120",
+            "updated-start",
             "compose images -q app",
             "image inspect --format {{len .RepoTags}} sha256:old",
             "image rm sha256:old",
@@ -122,11 +133,48 @@ def main():
             run("git", "rev-parse", "HEAD", cwd=checkout).stdout
             == run("git", "rev-parse", "HEAD", cwd=seed).stdout
         )
+        built = update(True, "--build")
+        assert built[:8] == [
+            "compose version",
+            "info",
+            "compose images -q app",
+            "compose version",
+            "info",
+            "compose config --quiet",
+            "compose build",
+            "updated-build",
+        ]
+        assert "compose pull app" not in built
+        assert built[8:10] == [
+            "compose up -d --no-build --pull never --wait --wait-timeout 120",
+            "updated-start",
+        ]
+        env["UPDATE_TEST_FAIL"] = "compose pull app"
+        pulled = update(False, deployed_before="old")
+        assert pulled[-1] == "compose pull app" and deployed.read_text() == "old"
+        assert not any(command.startswith("image prune") for command in pulled)
         env["UPDATE_TEST_FAIL"] = "compose build"
-        assert update(False)[-1] == "compose build"  # Never replace after a failed build.
-        env["UPDATE_TEST_FAIL"] = "compose up -d --wait --wait-timeout 120"
-        assert update(False)[-1] == env["UPDATE_TEST_FAIL"]
+        failed_build = update(False, "--build", deployed_before="old")
+        assert failed_build[-1] == "compose build" and deployed.read_text() == "old"
+        env["UPDATE_TEST_FAIL"] = "compose up -d --no-build --pull never --wait --wait-timeout 120"
+        failed_up = update(False, deployed_before="old")
+        assert failed_up[-1] == env["UPDATE_TEST_FAIL"] and deployed.read_text() == "old"
         del env["UPDATE_TEST_FAIL"]
+
+        # A direct start may create its own .env; argument help and errors never touch Docker.
+        for name in ("start.sh", "build.sh"):
+            log.write_text("")
+            assert run("bash", str(checkout / "scripts" / name), "--help").returncode == 0
+            assert log.read_text() == ""
+            assert run("bash", str(checkout / "scripts" / name), "--unknown", check=False).returncode != 0
+            assert log.read_text() == ""
+        settings.rename(checkout / ".env.saved")
+        log.write_text("")
+        assert run("bash", str(checkout / "scripts/start.sh")).returncode == 0
+        assert settings.read_bytes() == (checkout / ".env.example").read_bytes()
+        assert "compose pull app" in log.read_text().splitlines()
+        settings.unlink()
+        (checkout / ".env.saved").rename(settings)
 
         # Cleanup only follows a healthy deployment, preserves tags and never forces removal.
         env["UPDATE_TEST_TAGS"] = "1"

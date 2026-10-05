@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == --help && $# == 1 ]]; then
+  echo '사용법: ./scripts/install.sh [--build]'
+  echo '기본: Docker Hub 이미지를 받아 설치합니다. --build: 소스에서 로컬 빌드합니다.'
+  exit 0
+fi
+if (( $# > 1 )) || { (( $# == 1 )) && [[ "$1" != --build ]]; }; then
+  echo '지원하지 않는 인자입니다. ./scripts/install.sh --help를 확인하세요.' >&2
+  exit 1
+fi
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 if [[ "$(id -u)" == 0 ]]; then
@@ -29,18 +38,12 @@ if ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/
   echo 'sudo apt install chromium 명령으로 브라우저를 설치하세요.' >&2
   exit 1
 fi
-if [[ ! -f .env ]]; then
-  cp .env.example .env
-  echo '.env를 생성했습니다. 기본 설정으로 사용하거나 필요한 값을 수정한 뒤 다시 실행하세요. 방송·데모는 화면에서 선택합니다.'
-  exit 0
-fi
 sudo systemctl enable --now docker
 if ! docker info >/dev/null 2>&1; then
   echo "Docker 권한이 없습니다. sudo usermod -aG docker $(id -un) 실행 후 로그아웃/로그인하세요. docker 그룹은 관리자 수준 권한을 가집니다." >&2
   exit 1
 fi
-docker compose build
-docker compose up -d --wait --wait-timeout 120
+"$PROJECT_ROOT/scripts/start.sh" "$@"
 bash "$PROJECT_ROOT/deploy/repair-autostart.sh"
 
 AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/labwc"

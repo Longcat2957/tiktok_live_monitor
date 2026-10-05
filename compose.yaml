@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    image: tiktok-live-monitor:local
+    image: ${MONITOR_IMAGE:-longcat1132/tiktok-live-monitor:latest}
     env_file: .env
     environment:
       HOST: 0.0.0.0

@@ -5,13 +5,14 @@ PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # Load the whole operation before pull can replace this script on disk.
 main() {
   if [[ "${1:-}" == --help && $# == 1 ]]; then
-    echo '사용법: ./scripts/update.sh'
-    echo '현재 브랜치의 upstream에서 fast-forward 업데이트 후 Docker 빌드·교체·healthy 확인.'
+    echo '사용법: ./scripts/update.sh [--build]'
+    echo '현재 브랜치의 upstream에서 fast-forward 업데이트 후 Docker Hub 이미지 다운로드·교체·healthy 확인.'
+    echo '--build: Docker Hub 대신 현재 소스를 로컬 이미지로 빌드하여 실행.'
     echo '성공 후 이 앱의 태그 없는 미사용 이미지를 정리하고 Docker 디스크 사용량을 표시합니다.'
     echo '미커밋 변경이 있으면 중단합니다. .env는 보존합니다. 방송이 끝난 뒤 실행하세요.'
     return
   fi
-  if (( $# != 0 )); then
+  if (( $# > 1 )) || [[ $# == 1 && "${1:-}" != --build ]]; then
     echo '지원하지 않는 인자입니다. ./scripts/update.sh --help를 확인하세요.' >&2
     return 1
   fi
@@ -38,9 +39,8 @@ main() {
   git pull --ff-only
   echo "배포: $previous → $(git rev-parse --short HEAD)"
   previous_image="$(docker compose images -q app)"
-  ./scripts/build.sh
-  if ! docker compose up -d --wait --wait-timeout 120; then
-    echo '배포 상태 확인 실패. 자동 롤백하지 않습니다. docker compose logs --tail=100 app으로 확인하세요.' >&2
+  if ! ./scripts/start.sh "$@"; then
+    echo '이미지 준비 또는 배포 상태 확인 실패. 자동 롤백하지 않습니다. docker compose logs --tail=100 app으로 확인하세요.' >&2
     return 1
   fi
   bash "$PROJECT_ROOT/deploy/repair-autostart.sh"

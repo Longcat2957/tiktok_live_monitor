@@ -1,7 +1,8 @@
 <script lang="ts">
-    import { safeAvatar, type FeedMessage } from '../types';
+    import { safeAvatar, safeGiftImage, type FeedMessage } from '../types';
     let { comment, previous }: { comment: FeedMessage; previous?: FeedMessage } = $props();
     let imageFailed = $state(false);
+    let giftImageFailed = $state(false);
     let continued = $derived(
         comment.type === 'comment' &&
             previous?.type === 'comment' &&
@@ -15,15 +16,22 @@
             : [],
     );
     const labels = { gift: '선물', follow: '팔로우', share: '공유', subscribe: '구독' };
+    let giftHighlight = $derived.by(() => {
+        if (comment.type !== 'activity' || comment.kind !== 'gift') return '';
+        const gift = comment.gift_name.trim() || '선물';
+        return comment.count === 1
+            ? gift.endsWith('선물')
+                ? gift
+                : `${gift} 선물`
+            : `${gift} ${comment.count.toLocaleString('ko-KR')}개`;
+    });
     let activityText = $derived(
         comment.type === 'activity'
-            ? comment.kind === 'gift'
-                ? `${comment.gift_name} × ${comment.count.toLocaleString('ko-KR')}`
-                : comment.kind === 'follow'
-                  ? '방송을 팔로우했어요'
-                  : comment.kind === 'share'
-                    ? '방송을 공유했어요'
-                    : '구독을 알렸어요'
+            ? comment.kind === 'follow'
+                ? '방송을 팔로우했어요'
+                : comment.kind === 'share'
+                  ? '방송을 공유했어요'
+                  : '구독을 알렸어요'
             : '',
     );
 </script>
@@ -61,7 +69,28 @@
             <p class="nickname" title={name}>{name}</p>
             <span class="activity-label">{labels[comment.kind]}</span>
         </div>
-        <p class="body">{activityText}</p>
+        {#if comment.kind === 'gift'}
+            <div class="gift-row">
+                {#if !giftImageFailed && safeGiftImage(comment.gift_image_url)}
+                    <img
+                        class="gift-image"
+                        src={comment.gift_image_url}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        referrerpolicy="no-referrer"
+                        onerror={() => (giftImageFailed = true)}
+                    />
+                {/if}
+                <p class="body gift-content">
+                    <strong class="gift-highlight">{giftHighlight}</strong><span class="gift-verb"
+                        >{comment.count === 1 ? '을 보냈어요' : '를 보냈어요'}</span
+                    >
+                </p>
+            </div>
+        {:else}
+            <p class="body">{activityText}</p>
+        {/if}
     {:else}
         {#if !continued}
             <div class="comment-author">
@@ -211,6 +240,32 @@
         font-size: calc(clamp(32px, 5.2vw, 62px) * var(--comment-scale, 1));
         font-weight: 750;
         line-height: 1.3;
+    }
+    .gift-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: calc(16px * var(--comment-scale, 1));
+        min-width: 0;
+    }
+    .gift-image {
+        flex: 0 0 auto;
+        width: calc(64px * var(--comment-scale, 1));
+        max-width: 100%;
+        height: calc(64px * var(--comment-scale, 1));
+        object-fit: contain;
+    }
+    .gift-content {
+        flex: 1 1 8ch;
+        min-width: 0;
+    }
+    .gift-highlight {
+        font-weight: 800;
+    }
+    .gift-verb {
+        font-size: 0.82em;
+        font-weight: 550;
+        word-break: keep-all;
     }
     .activity-label {
         padding: calc(8px * var(--comment-scale, 1)) calc(16px * var(--comment-scale, 1));

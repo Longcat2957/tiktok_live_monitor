@@ -65,9 +65,10 @@ SvelteKit을 사용하되 MVP에서는 `/` 한 페이지만 사용한다. 운영
 - 상단에 방송 아이디, 현재 시청자 수와 좋아요 합계를 표시한다. 푸터 왼쪽에는 방송 중·일시정지·종료 상태, 오른쪽에는 서버 연결 상태를 표시한다.
 - 일반 댓글 UI는 유지한다. 선물·팔로우·공유·구독 알림은 각각 핑크·초록·파랑·보라 배경, 이벤트 이름과 일반 댓글보다 큰 굵은 글씨로 구분한다. 다크·라이트 테마와 글자 배율을 따르고 긴 내용은 줄바꿈한다. 댓글과 같은 수신 순서를 유지하며 목록 보관 수는 댓글과 활동을 합친 수다.
 - 선물 연속 전송은 마지막 누적 수량만 표시하며 금액으로 환산하지 않는다.
+- 선물은 한 개일 때 `Rose 선물을 보냈어요`, 여러 개일 때 `Rose 5개를 보냈어요`로 표시한다. 이름·수량을 강조하고 안내 문구는 조금 작게 표시한다. 이벤트에 포함된 TikTok 제공 HTTPS 이미지 주소를 서버 캐시에 등록하고 활동의 선택적 `gift_image_url`에는 `/gift-images/<SHA-256 해시>`를 전달한다. 추가 선물 목록 조회는 하지 않으며 선물 종류별 그림이나 이름 목록은 앱에서 관리하지 않는다. 누락·잘못된 주소·로딩 실패 시 문구만 유지한다. 선물 그림과 문구는 댓글 글자 배율을 함께 따른다. mock에는 실제 Rose 이미지 한 장을 WebP 샘플로 포함해 1개·5개·25개 문구와 이미지 표시를 오프라인에서 확인한다.
 - 상태 메시지에 `live: {state, viewers, likes}` 스냅샷을 포함한다. 통계는 최대 초당 한 번 모아 전달하고, 방송 상태 변경은 즉시 전달한다. 아직 수신하지 않은 통계는 `null`이다.
 - 댓글·활동은 replay하지 않는다. 새 브라우저에는 최신 상태·통계만 전달한다. 새로운 세션에서는 통계와 목록을 초기화한다.
-- mock은 외부 네트워크 없이 프로필·배지·네 가지 활동 및 일시정지→재개→종료→새 방송을 반복한다.
+- mock은 외부 네트워크 없이 짧은 채팅·프로필·배지·네 가지 활동과 Rose 수량별 선물을 12단계로 반복한다. 방송 상태는 계속 live이며 장문·긴 URL·스크립트 문자열과 자동 일시정지·종료는 데모에서 제외한다. `/demo-gift-rose.webp`는 mock에서만 전달하는 정적 샘플이며 실방송 선물 이미지는 기존 CDN 캐시를 사용한다.
 - 계정 하나, 영구 저장 없음, bounded queue와 느린 브라우저 격리는 유지한다.
 
 ### MVP에서 제외할 기능
@@ -130,6 +131,7 @@ tiktok-live-monitor/
 │   │   │       ├── monitor.py
 │   │   │       ├── settings.py
 │   │   │       ├── health.py
+│   │   │       ├── gift_images.py
 │   │   │       └── websocket.py
 │   │   ├── schemas/
 │   │   │   ├── monitor.py
@@ -140,6 +142,7 @@ tiktok-live-monitor/
 │   │   │   ├── monitor.py
 │   │   │   ├── demo.py
 │   │   │   ├── event_sink.py
+│   │   │   ├── gift_images.py
 │   │   │   └── errors.py
 │   │   ├── integrations/
 │   │   │   └── tiktok.py
@@ -205,6 +208,7 @@ Python 패키지별 `__init__.py`는 위 목록에서 생략했다. 백엔드·�
 - `MonitorService`의 시작·종료·재연결·설정 변경은 명시적인 공개 메서드로 제공하며 내부의 단일 직렬 전환 경로를 공유한다. 상태·설정 조회는 명시적 응답 모델을 반환한다.
 - TikTokLive API는 `integrations/tiktok.py`에 격리한다. `services/demo.py`는 같은 앱 이벤트 계약으로 데모를 생성하고, `EventSink`는 이전 세션의 늦은 이벤트를 차단한다.
 - `realtime/broadcaster.py`는 브라우저별 송신 큐와 느린 연결 격리를 담당한다.
+- `services/gift_images.py`는 선물 이미지의 용량 제한이 있는 공유 메모리 캐시를 담당한다. `MonitorService`가 캐시의 생명주기를 관리하고 HTTP 라우터는 공개 메서드로 이미지를 조회한다. 방송 수신·브로드캐스트에서는 주소 등록만 수행하고 다운로드를 기다리지 않는다.
 - 잘못된 런타임 설정은 서비스의 `InvalidSettingsError`를 통해 422로 변환한다. 내부 Pydantic 오류를 일괄적으로 사용자 입력 오류로 처리하지 않는다.
 - API 경로·JSON·WebSocket 계약과 `app.main:app`, `python -m app` 실행 방식은 유지한다.
 
@@ -298,12 +302,17 @@ FastAPI의 lifespan context manager를 사용한다. deprecated된 startup/shutd
 최소한 다음 endpoint를 제공한다.
 
 - `GET /health`: 프로세스 생존, source 상태, WebSocket 연결 수, queue 사용량을 JSON으로 반환
+- `GET /gift-images/{key}`: 수신한 선물의 이미지 캐시. 키는 전체 원본 URL의 SHA-256 소문자 64자리이며 등록되지 않은 키로는 다운로드하지 않는다.
 - `GET /`: 빌드된 SvelteKit UI 반환
 - `GET /ws`: WebSocket upgrade endpoint
 
 API 및 WebSocket route를 등록한 뒤 마지막에 정적 파일을 `/`에 mount한다. 정적 파일 mount가 `/health`나 `/ws`를 가리지 않도록 route 순서 또는 명시적 구조를 검증한다.
 
 운영은 same-origin이므로 wildcard CORS를 기본으로 켜지 않는다. 개발 서버에서만 필요한 origin을 명시적으로 허용하거나 Vite proxy를 사용한다.
+
+선물 이미지는 HTTP 요청 시 필요한 것만 내려받는다. 같은 URL의 동시 요청은 하나의 다운로드를 공유하고 성공한 응답은 1시간, 실패는 30초 캐시한다. 원본 URL의 쿼리를 포함해 키를 생성하므로 주소 변경은 새 이미지로 취급한다. 원본 주소 등록은 최대 1,024개, 이미지 본문은 최대 128개·16MiB, 개별 이미지는 2MiB로 제한한다. 다운로드 동시 실행은 최대 4개, 대기를 포함한 작업은 최대 16개이며 요청에 시간 상한을 둔다. 만료·용량 초과·서버 재시작 시 다시 내려받는다. 서버 디스크에는 저장하지 않으며 댓글·활동 보관 정책은 그대로 유지한다.
+
+등록된 TikTok CDN 도메인(`tiktokcdn.com`, `tiktokcdn-us.com`, `tiktokcdn-eu.com`과 각각의 하위 도메인)의 HTTPS 기본/443 포트만 허용한다. 자격증명·리다이렉트·SVG/HTML은 허용하지 않으며 래스터 이미지 형식과 크기를 검사한다. 서버 응답은 브라우저 캐시 유효기간·ETag·`nosniff`를 제공하고 원본 URL이나 쿼리를 로그에 출력하지 않는다. 앱 종료 시 다운로드 작업과 HTTP 연결을 정리한다.
 
 ## 8. 프론트엔드 요구사항
 

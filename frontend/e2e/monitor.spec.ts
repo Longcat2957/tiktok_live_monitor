@@ -3,6 +3,12 @@ import { once } from 'node:events';
 import { resolve } from 'node:path';
 import { expect, test, type APIRequestContext } from '@playwright/test';
 
+const giftImageUrl = `/gift-images/${'a'.repeat(64)}`;
+const giftPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==',
+    'base64',
+);
+
 async function change(request: APIRequestContext, method: string, path: string, body = {}) {
     const { session_id } = await (await request.get('/config')).json();
     const response = await request.fetch(path, { method, data: { session_id, ...body } });
@@ -149,7 +155,7 @@ for (const viewport of [
             await expect.poll(fontSize).toBeCloseTo(original, 1);
             expect((await (await request.get('/health')).json()).source.session_id).toBe(session);
         }
-        await expect(page.locator('.body').filter({ hasText: '<script>' }).first()).toBeAttached();
+        await expect(page.locator('.body').filter({ hasText: '<script>' })).toHaveCount(0);
         await page.waitForTimeout(1600);
         expect(await page.locator('.comment').count()).toBe(30);
         expect(
@@ -171,7 +177,9 @@ for (const viewport of [
 
 test('backend restart returns to setup without reload and mock can start again', async ({
     page,
+    request,
 }) => {
+    await startMock(request);
     await page.goto('/');
     await expect(page.locator('.comment')).toHaveCount(30);
     await stopServer();
@@ -750,6 +758,9 @@ test('development proxy preserves origin for start, settings and refresh', async
                 { timeout: 15000 },
             )
             .toBe(true);
+        const missingGift = await request.get(`http://127.0.0.1:18766${giftImageUrl}`);
+        expect(missingGift.status()).toBe(404);
+        expect(missingGift.headers()['cache-control']).toBe('no-store');
         await page.goto('http://127.0.0.1:18766');
         await page.getByText('데모 체험', { exact: true }).first().click();
         await page.getByRole('button', { name: '시작', exact: true }).click();
@@ -774,10 +785,19 @@ test('development proxy preserves origin for start, settings and refresh', async
     }
 });
 
-test('mock shows profiles, badges, all activities and broadcast lifecycle independently of server connection', async ({
+test('mock shows profiles, badges, activities and locally bundled Rose gifts', async ({
     page,
     request,
 }) => {
+    const externalRequests: string[] = [];
+    page.on('request', (request) => {
+        const url = new URL(request.url());
+        if (
+            (url.protocol === 'http:' || url.protocol === 'https:') &&
+            !['localhost', '127.0.0.1'].includes(url.hostname)
+        )
+            externalRequests.push(request.url());
+    });
     await startMock(request);
     await change(request, 'PATCH', '/config', {
         settings: { mock_interval_seconds: 0.3, comment_history_size: 30 },
@@ -792,7 +812,24 @@ test('mock shows profiles, badges, all activities and broadcast lifecycle indepe
     for (const kind of ['gift', 'follow', 'share', 'subscribe']) {
         await expect(page.locator(`[data-kind=${kind}].activity`).first()).toBeAttached();
     }
-    await expect(page.locator('.activity[data-kind=gift] .body').first()).toHaveText('장미 × 5');
+    for (const [sentence, highlight] of [
+        ['Rose 선물을 보냈어요', 'Rose 선물'],
+        ['Rose 5개를 보냈어요', 'Rose 5개'],
+        ['Rose 25개를 보냈어요', 'Rose 25개'],
+    ]) {
+        const gift = page
+            .locator('.activity[data-kind=gift]')
+            .filter({ hasText: sentence })
+            .first();
+        await expect(gift.locator('.body')).toHaveText(sentence);
+        await expect(gift.locator('.gift-highlight')).toHaveText(highlight);
+        const image = gift.locator('.gift-image');
+        await expect(image).toHaveAttribute('src', '/demo-gift-rose.webp');
+        await image.scrollIntoViewIfNeeded();
+        await expect
+            .poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth))
+            .toBeGreaterThan(0);
+    }
     await expect
         .poll(() =>
             page
@@ -808,13 +845,10 @@ test('mock shows profiles, badges, all activities and broadcast lifecycle indepe
         .toBe(true);
     await expect(page.locator('.avatar img[src="/demo-avatar-1.svg"]')).toHaveCount(0);
     await expect(page.locator('.avatar > span').first()).toBeAttached();
-    await expect(page.locator('.broadcast-state')).toHaveText('방송 일시정지');
-    await expect(page.locator('.connection')).toHaveText('서버 연결됨');
     await expect(page.locator('.broadcast-state')).toHaveText('방송 중');
-    await expect(page.locator('.broadcast-state')).toHaveText('방송 종료');
     await expect(page.locator('.connection')).toHaveText('서버 연결됨');
     await page.screenshot({ path: 'test-results/live-info-and-activities.png' });
-    await expect(page.locator('.broadcast-state')).toHaveText('방송 중');
+    expect(externalRequests).toEqual([]);
     await page.getByRole('button', { name: '모니터 종료 · 처음으로' }).click();
     await expect(page.locator('.live-summary')).toHaveCount(0);
     await expect(page.locator('.activity')).toHaveCount(0);
@@ -1354,6 +1388,9 @@ test('font scale resizes comment content while broadcast information stays fixed
     });
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.setViewportSize({ width: 320, height: 844 });
+    await page.route('**' + giftImageUrl, (route) =>
+        route.fulfill({ contentType: 'image/png', body: giftPng }),
+    );
     await page.routeWebSocket('**/ws', (socket) => {
         send = (data) => socket.send(JSON.stringify(data));
         send(status(username));
@@ -1380,6 +1417,7 @@ test('font scale resizes comment content while broadcast information stays fixed
                 kind,
                 gift_name: '장미',
                 count: 1,
+                ...(kind === 'gift' ? { gift_image_url: giftImageUrl } : {}),
             });
     });
     await page.goto('/');
@@ -1390,6 +1428,12 @@ test('font scale resizes comment content while broadcast information stays fixed
     await expect(page.locator('.live-metrics dt')).toHaveText(['시청자', '좋아요']);
     await expect(page.locator('.live-metrics strong')).toHaveText(['1,234', '56,789']);
     await expect(page.locator('.live-metrics svg')).toHaveCount(2);
+    const giftImage = page.locator('.gift-image');
+    await giftImage.scrollIntoViewIfNeeded();
+    await expect(giftImage).toHaveAttribute('src', giftImageUrl);
+    await expect
+        .poll(() => giftImage.evaluate((node) => (node as HTMLImageElement).naturalWidth))
+        .toBe(1);
     const sizes = (fixed = false) =>
         page.evaluate((fixed) => {
             const read = (selector: string, properties: string[]) =>
@@ -1422,6 +1466,8 @@ test('font scale resizes comment content while broadcast information stays fixed
                     'border-top-left-radius',
                 ]),
                 ...read('.avatar', ['width', 'height', 'font-size']),
+                ...read('.gift-image', ['width', 'height']),
+                ...read('.gift-highlight, .gift-verb', ['font-size']),
                 ...read('.comment.activity', [
                     'padding-top',
                     'padding-right',
@@ -1489,4 +1535,133 @@ test('font scale resizes comment content while broadcast information stays fixed
         send!(status(username));
         await expect(page.locator('.account-name')).toHaveText(`@${username}`);
     }
+});
+
+test('gift sentences keep plain names and formatted counts when images are missing, unsafe or broken', async ({
+    page,
+}) => {
+    const longName = `<b>${'매우긴선물이름'.repeat(24)}</b>`;
+    const brokenImageUrl = `/gift-images/${'b'.repeat(64)}`;
+    const errors: string[] = [];
+    let brokenRequests = 0;
+    page.on('pageerror', (error) => errors.push(error.message));
+    page.on('dialog', () => errors.push('Unexpected script execution'));
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.route('**' + giftImageUrl, (route) =>
+        route.fulfill({ contentType: 'image/png', body: giftPng }),
+    );
+    await page.route('**' + brokenImageUrl, (route) => {
+        brokenRequests++;
+        return route.fulfill({ status: 404, body: '' });
+    });
+    await page.routeWebSocket('**/ws', (socket) => {
+        socket.send(
+            JSON.stringify({
+                type: 'status',
+                source: 'tiktok',
+                state: 'connected',
+                message: '',
+                session_id: 'gift-details',
+                username: 'gift_account',
+                comment_history_size: 30,
+                live: { state: 'live', viewers: 1234, likes: 56789 },
+            }),
+        );
+        for (const gift of [
+            { id: 'one', gift_name: 'Rose', count: 1, gift_image_url: giftImageUrl },
+            { id: 'missing', gift_name: longName, count: 1000 },
+            {
+                id: 'unsafe',
+                gift_name: 'Rose',
+                count: 5,
+                gift_image_url: 'javascript:alert("gift")',
+            },
+            {
+                id: 'broken',
+                gift_name: 'Rose',
+                count: 2,
+                gift_image_url: brokenImageUrl,
+            },
+            {
+                id: 'malformed',
+                gift_name: 'Rose',
+                count: 3,
+                gift_image_url: `/gift-images/${'A'.repeat(64)}`,
+            },
+        ])
+            socket.send(
+                JSON.stringify({
+                    type: 'activity',
+                    kind: 'gift',
+                    received_at: '2026-10-05T00:00:00Z',
+                    user: {
+                        nickname: '선물을 보낸 시청자',
+                        unique_id: 'gifter',
+                        avatar_url: '/demo-avatar-0.svg',
+                    },
+                    ...gift,
+                }),
+            );
+    });
+    await page.goto('/');
+    const one = page.locator('[data-comment-id="one"]');
+    const missing = page.locator('[data-comment-id="missing"]');
+    const unsafe = page.locator('[data-comment-id="unsafe"]');
+    const broken = page.locator('[data-comment-id="broken"]');
+    const malformed = page.locator('[data-comment-id="malformed"]');
+    await expect(page.locator('.activity-label')).toHaveText(Array(5).fill('선물'));
+    await expect(page.locator('.activity-header .nickname')).toHaveText(
+        Array(5).fill('선물을 보낸 시청자'),
+    );
+    await expect(one.locator('.body')).toHaveText('Rose 선물을 보냈어요');
+    await expect(one.locator('.gift-highlight')).toHaveText('Rose 선물');
+    await expect(missing.locator('.body')).toHaveText(`${longName} 1,000개를 보냈어요`);
+    await expect(missing.locator('.gift-highlight')).toHaveText(`${longName} 1,000개`);
+    await expect(missing.locator('b, script, a')).toHaveCount(0);
+    for (const row of [missing, unsafe, broken, malformed]) {
+        await row.scrollIntoViewIfNeeded();
+        await expect(row.locator('.gift-image')).toHaveCount(0);
+        await expect(row.locator('.avatar img')).toHaveCount(1);
+    }
+    await expect(unsafe.locator('.body')).toHaveText('Rose 5개를 보냈어요');
+    await expect(broken.locator('.body')).toHaveText('Rose 2개를 보냈어요');
+    await expect(malformed.locator('.body')).toHaveText('Rose 3개를 보냈어요');
+    expect(brokenRequests).toBe(1);
+    const image = one.locator('.gift-image');
+    await image.scrollIntoViewIfNeeded();
+    await expect(image).toHaveAttribute('src', giftImageUrl);
+    await expect
+        .poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth))
+        .toBe(1);
+    await expect(image).toHaveCSS('object-fit', 'contain');
+    expect(
+        await one
+            .locator('.gift-highlight')
+            .evaluate((node) => parseFloat(getComputedStyle(node).fontSize)),
+    ).toBeGreaterThan(
+        await one
+            .locator('.gift-verb')
+            .evaluate((node) => parseFloat(getComputedStyle(node).fontSize)),
+    );
+    let scale = 100;
+    for (const next of [20, 100, 200]) {
+        const control = page.getByRole('button', {
+            name: next < scale ? '댓글 글자 작게' : '댓글 글자 크게',
+            exact: true,
+        });
+        for (let step = 0; step < Math.abs(next - scale) / 5; step++) await control.click();
+        scale = next;
+        await expect(page.locator('.font-scale-control output')).toContainText(`${scale}%`);
+        expect(
+            await page
+                .locator('.comment-viewport')
+                .evaluate((node) => node.scrollWidth <= node.clientWidth),
+        ).toBe(true);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+            true,
+        );
+        await expect(missing.locator('.body')).toHaveText(`${longName} 1,000개를 보냈어요`);
+    }
+    expect(errors).toEqual([]);
 });

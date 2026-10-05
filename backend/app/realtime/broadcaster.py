@@ -6,7 +6,8 @@ from time import monotonic
 
 from fastapi import WebSocket
 
-from ..schemas.events import FeedEvent, LiveInfo, Message, SourceState, Status
+from ..schemas.events import Activity, FeedEvent, LiveInfo, Message, SourceState, Status
+from ..services.gift_images import GiftImageCache
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,12 @@ class Peer:
 
 class WebSocketBroadcaster:
     def __init__(
-        self, status: Status, capacity: int = 100, send_timeout: float = 5, max_clients: int = 16
+        self,
+        status: Status,
+        capacity: int = 100,
+        send_timeout: float = 5,
+        max_clients: int = 16,
+        gift_images: GiftImageCache | None = None,
     ) -> None:
         self.status = status
         self.live_dirty = False
@@ -40,6 +46,7 @@ class WebSocketBroadcaster:
         self.send_timeout = send_timeout
         self.clients: dict[WebSocket, Peer] = {}
         self.tasks: set[asyncio.Task[None]] = set()
+        self.gift_images = gift_images
 
     async def connect(self, socket: WebSocket) -> bool:
         if socket in self.clients:
@@ -88,6 +95,22 @@ class WebSocketBroadcaster:
             await asyncio.gather(peer.task, return_exceptions=True)
 
     def broadcast(self, message: Message) -> None:
+        if (
+            self.gift_images is not None
+            and isinstance(message, Activity)
+            and message.kind == "gift"
+            and message.gift_image_url
+        ):
+            message = message.model_copy(
+                update={
+                    "gift_image_url": (
+                        message.gift_image_url
+                        if self.status.source == "mock"
+                        and message.gift_image_url == "/demo-gift-rose.webp"
+                        else self.gift_images.register(message.gift_image_url)
+                    )
+                }
+            )
         for socket, peer in list(self.clients.items()):
             if peer.queue.full():
                 self.slow_disconnects += 1

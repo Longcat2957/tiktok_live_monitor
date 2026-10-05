@@ -12,6 +12,7 @@ export default defineConfig({
             '/account': { target: backend, changeOrigin: false },
             '/refresh': { target: backend, changeOrigin: false },
             '/config': { target: backend, changeOrigin: false },
+            '/gift-images': { target: backend, changeOrigin: false },
             '/health': backend,
         },
     },

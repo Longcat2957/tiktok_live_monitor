@@ -60,7 +60,11 @@ async def test_real_http_websocket_burst_conflicts_and_shutdown():
                     )
                 for peer in (first, second):
                     async with asyncio.timeout(3):
-                        received = [json.loads(await peer.recv())["comment"] for _ in range(500)]
+                        received = []
+                        while len(received) < 500:
+                            event = json.loads(await peer.recv())
+                            if event["type"] == "comment":
+                                received.append(event["comment"])
                     assert received == [str(i) for i in range(500)]
                 sid = started.json()["session_id"]
                 responses = await asyncio.gather(

@@ -38,9 +38,14 @@ def _warn_invalid(kind: Literal["comment", "activity"]) -> None:
         logger.warning("Skipping invalid %s events: %d (payload omitted)", kind, total)
 
 
-def avatar_url(user: object) -> str | None:
-    image = getattr(user, "avatar_thumb", None)
-    for value in (getattr(image, "url_list", None) or [])[:5]:
+def image_url(image: object) -> str | None:
+    try:
+        values = getattr(image, "url_list", None)
+    except Exception:
+        return None
+    if not isinstance(values, (list, tuple)):
+        return None
+    for value in values[:5]:
         if not isinstance(value, str) or len(value) > 2048:
             continue
         try:
@@ -54,6 +59,21 @@ def avatar_url(user: object) -> str | None:
                 return value
         except ValueError:
             continue
+    return None
+
+
+def avatar_url(user: object) -> str | None:
+    return image_url(getattr(user, "avatar_thumb", None))
+
+
+def gift_image_url(gift: object) -> str | None:
+    for name in ("image", "icon", "preview_image"):
+        try:
+            url = image_url(getattr(gift, name, None))
+        except Exception:
+            continue
+        if url is not None:
+            return url
     return None
 
 
@@ -109,6 +129,7 @@ def parse_activity(event: object) -> Activity | None:
                 kind="gift",
                 user=parse_user(event),
                 gift_name=(gift.name if gift else "") or "선물",
+                gift_image_url=gift_image_url(gift),
                 count=max(1, event.repeat_count),
             )
         if isinstance(event, FollowEvent):

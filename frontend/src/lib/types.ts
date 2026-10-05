@@ -31,6 +31,7 @@ export interface ActivityMessage {
     kind: 'gift' | 'follow' | 'share' | 'subscribe';
     gift_name: string;
     count: number;
+    gift_image_url?: string | null;
 }
 export type FeedMessage = CommentMessage | ActivityMessage;
 export interface StatusMessage {
@@ -55,15 +56,29 @@ function stringWithinLimit(value: unknown, limit: number): value is string {
     return typeof value === 'string' && (value.length <= limit || [...value].length <= limit);
 }
 
-export function safeAvatar(value: unknown): value is string {
+function safeRemoteImage(value: unknown): value is string {
     if (!stringWithinLimit(value, 2048)) return false;
-    if (/^\/demo-avatar-[0-2]\.svg$/.test(value)) return true;
     try {
         const url = new URL(value);
         return url.protocol === 'https:' && Boolean(url.hostname) && !url.username && !url.password;
     } catch {
         return false;
     }
+}
+
+export function safeAvatar(value: unknown): value is string {
+    return (
+        (typeof value === 'string' && /^\/demo-avatar-[0-2]\.svg$/.test(value)) ||
+        safeRemoteImage(value)
+    );
+}
+
+export function safeGiftImage(value: unknown): value is string {
+    return (
+        (typeof value === 'string' &&
+            (value === '/demo-gift-rose.webp' || /^\/gift-images\/[a-f0-9]{64}$/.test(value))) ||
+        safeRemoteImage(value)
+    );
 }
 
 function parseUser(value: unknown): Viewer | null {
@@ -143,8 +158,15 @@ export function parseMessage(raw: unknown): Message | null {
             Number.isInteger(value.count) &&
             Number(value.count) >= 1 &&
             Number(value.count) <= 1_000_000_000
-        )
-            return { ...value, user } as unknown as ActivityMessage;
+        ) {
+            const activity = { ...value, user } as unknown as ActivityMessage;
+            if (
+                value.kind !== 'gift' ||
+                !(value.gift_image_url === null || safeGiftImage(value.gift_image_url))
+            )
+                delete activity.gift_image_url;
+            return activity;
+        }
     }
     if (
         value.type === 'status' &&

@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from .api import exception_handlers
-from .api.routers import health, monitor, websocket
+from .api.routers import gift_images, health, monitor, websocket
 from .api.routers import settings as settings_router
 from .api.security import local_requests
 from .config import Settings
@@ -38,6 +38,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_exception_handler(404, exception_handlers.missing_page)
 
     app.include_router(health.router)
+    app.include_router(gift_images.router)
     app.include_router(settings_router.router)
     app.include_router(monitor.router)
     app.include_router(websocket.router)

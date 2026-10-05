@@ -42,6 +42,7 @@ class Activity(BaseModel):
     user: User
     kind: Literal["gift", "follow", "share", "subscribe"]
     gift_name: str = Field(default="선물", max_length=256)
+    gift_image_url: str | None = Field(default=None, max_length=2048)
     count: int = Field(default=1, ge=1, le=1_000_000_000)
 
 

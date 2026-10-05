@@ -6,7 +6,8 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.main import create_app
 from app.realtime.broadcaster import WebSocketBroadcaster, enqueue_event
-from app.schemas.events import Comment, Status, User
+from app.schemas.events import Activity, Comment, Status, User
+from app.services.gift_images import GiftImageCache
 
 
 def test_mock_websocket_and_disconnect():
@@ -82,6 +83,41 @@ async def test_broken_and_slow_peers_do_not_block_healthy_peer() -> None:
     assert broken.closed and slow.closed
     await manager.close()
     assert not manager.clients
+
+
+async def test_gift_url_is_registered_without_fetch_and_feed_order_is_preserved() -> None:
+    cache = GiftImageCache()
+    manager = WebSocketBroadcaster(
+        Status(source="mock", state="connected", message="ok"), gift_images=cache
+    )
+    socket = Socket()
+    await manager.connect(socket)
+    user = User(nickname="n", unique_id="u")
+    manager.broadcast(
+        Activity(
+            user=user,
+            kind="gift",
+            gift_name="Rose",
+            gift_image_url="https://p16.tiktokcdn.com/gift.png?token=private",
+        )
+    )
+    manager.broadcast(Comment(user=user, comment="after"))
+    await asyncio.sleep(0)
+    assert [message["type"] for message in socket.messages] == ["status", "activity", "comment"]
+    assert socket.messages[1]["gift_image_url"].startswith("/gift-images/")
+    assert "token" not in socket.messages[1]["gift_image_url"]
+    for image_url in ("/demo-gift-rose.webp", "/untrusted.webp"):
+        manager.broadcast(Activity(user=user, kind="gift", gift_image_url=image_url))
+    await asyncio.sleep(0)
+    assert socket.messages[-2]["gift_image_url"] == "/demo-gift-rose.webp"
+    assert socket.messages[-1]["gift_image_url"] is None
+    manager.begin_session(Status(source="tiktok", state="connected", message="ok"))
+    manager.broadcast(Activity(user=user, kind="gift", gift_image_url="/demo-gift-rose.webp"))
+    await asyncio.sleep(0)
+    assert socket.messages[-1]["gift_image_url"] is None
+    assert cache.client is None
+    await manager.close()
+    await cache.close()
 
 
 async def test_peer_queue_overflow_disconnects_only_slow_client() -> None:

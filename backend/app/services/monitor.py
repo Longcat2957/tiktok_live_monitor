@@ -14,6 +14,7 @@ from ..schemas.settings import SettingsResponse
 from .demo import DemoStream
 from .errors import ConflictError, InvalidSettingsError, UnavailableError
 from .event_sink import EventSink
+from .gift_images import CachedImage, GiftImageCache
 
 logger = logging.getLogger(__name__)
 STOP_TIMEOUT = 12.0
@@ -40,7 +41,8 @@ class MonitorService:
 
     def __init__(self, config: Settings) -> None:
         self.config = config
-        self.broadcaster = WebSocketBroadcaster(self._status())
+        self.gift_images = GiftImageCache()
+        self.broadcaster = WebSocketBroadcaster(self._status(), gift_images=self.gift_images)
         self.queue: asyncio.Queue[FeedEvent] = asyncio.Queue(config.comment_queue_size)
         self.stream_task: asyncio.Task[None] | None = None
         self.consumer_task: asyncio.Task[None] | None = None
@@ -103,6 +105,9 @@ class MonitorService:
             dropped_comments=self.broadcaster.dropped_comments,
             slow_disconnects=self.broadcaster.slow_disconnects,
         )
+
+    async def get_gift_image(self, key: str) -> CachedImage | None:
+        return await self.gift_images.get(key)
 
     async def start(
         self, session_id: str, *, source: SourceName, username: str | None = None
@@ -293,6 +298,9 @@ class MonitorService:
                 task.cancel()
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
-        async with self.lock:
-            await self._stop_session()
-        await self.broadcaster.close()
+        try:
+            async with self.lock:
+                await self._stop_session()
+            await self.broadcaster.close()
+        finally:
+            await self.gift_images.close()

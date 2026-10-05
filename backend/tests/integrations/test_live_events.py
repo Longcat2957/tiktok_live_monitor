@@ -75,7 +75,15 @@ async def test_upstream_wire_events_reach_registered_listeners_without_payload_l
             await deliver(
                 "WebcastChatMessage", CommentEvent.from_dict({"user": USER, "content": "hello"})
             )
-            gift = {"user": USER, "gift": {"name": "장미", "type": 1}, "repeatCount": 5}
+            gift = {
+                "user": USER,
+                "gift": {
+                    "name": "장미",
+                    "type": 1,
+                    "image": {"urlList": ["https://example.com/rose.png"]},
+                },
+                "repeatCount": 5,
+            }
             await deliver("WebcastGiftMessage", GiftEvent.from_dict(gift))
             await deliver("WebcastGiftMessage", GiftEvent.from_dict({**gift, "repeatEnd": 1}))
             for marker in ("follow", "share"):
@@ -109,6 +117,7 @@ async def test_upstream_wire_events_reach_registered_listeners_without_payload_l
             ]
             assert all(item.user.unique_id == "viewer" for item in feed)
             assert feed[1].count == 5
+            assert feed[1].gift_image_url == "https://example.com/rose.png"
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
@@ -144,12 +153,42 @@ def test_comment_avatar_and_v3_badges_without_legacy_helpers():
     assert result.comment == "안녕하세요"
 
 
-def test_activity_mapping_and_cumulative_gift_streak():
-    data = {"user": USER, "gift": {"name": "장미", "type": 1}, "repeatCount": 5}
+def test_activity_mapping_and_cumulative_gift_streak(caplog):
+    data = {
+        "user": USER,
+        "gift": {
+            "name": "장미",
+            "type": 1,
+            "image": {"urlList": ["javascript:bad", "https://example.com/rose.png"]},
+        },
+        "repeatCount": 5,
+    }
     assert parse_activity(GiftEvent.from_dict(data)) is None
     final = parse_activity(GiftEvent.from_dict({**data, "repeatEnd": 1}))
     assert (final.kind, final.gift_name, final.count) == ("gift", "장미", 5)
+    assert final.gift_image_url == "https://example.com/rose.png"
     assert parse_activity(GiftEvent.from_dict({**data, "gift": {"type": 2}})).count == 5
+    for gift, expected in (
+        ({"name": "Rose", "type": 2}, None),
+        ({"image": {"urlList": ["https://user:secret@example.com/rose.png"]}}, None),
+        ({"image": {"urlList": ["https://example.com/" + "x" * 2048]}}, None),
+        (
+            {
+                "image": {"urlList": ["http://example.com/rose.png"]},
+                "icon": {"urlList": ["https://example.com/icon.png"]},
+            },
+            "https://example.com/icon.png",
+        ),
+        (
+            {"previewImage": {"urlList": ["https://example.com/preview.png"]}},
+            "https://example.com/preview.png",
+        ),
+    ):
+        activity = parse_activity(GiftEvent.from_dict({"user": USER, "gift": gift}))
+        assert activity is not None and activity.kind == "gift"
+        assert activity.gift_image_url == expected
+    assert "https://user:secret@example.com" not in caplog.text
+    assert Activity(kind="gift", user=final.user).gift_image_url is None
     for event_type, kind in (
         (FollowEvent, "follow"),
         (ShareEvent, "share"),
@@ -189,7 +228,7 @@ async def test_live_snapshot_coalesces_counts_and_resets_at_session_boundary():
         await asyncio.gather(consumer, return_exceptions=True)
 
 
-async def test_mock_cycle_contains_all_events_states_and_offline_avatars():
+async def test_mock_cycle_contains_rose_quantities_activities_and_offline_images():
     manager = WebSocketBroadcaster(Status(source="mock", state="connecting", message=""))
     states = []
     original = manager.update_live
@@ -218,11 +257,15 @@ async def test_mock_cycle_contains_all_events_states_and_offline_avatars():
         "share",
         "subscribe",
     }
-    assert (
-        states[:24] == ["live"] * 12 + ["paused"] * 2 + ["live"] * 6 + ["ended"] * 2 + ["live"] * 2
-    )
+    assert states[:24] == ["live"] * 24
+    gifts = [e for e in events if isinstance(e, Activity) and e.kind == "gift"]
+    assert [gift.count for gift in gifts[:6]] == [1, 5, 25, 1, 5, 25]
+    assert all(gift.gift_name == "Rose" for gift in gifts)
+    assert all(gift.gift_image_url == "/demo-gift-rose.webp" for gift in gifts)
     comments = [e for e in events if isinstance(e, Comment)]
     assert all(
         e.user.avatar_url is None or e.user.avatar_url.startswith("/demo-avatar-") for e in comments
     )
     assert any(e.user.badges for e in comments)
+    assert all(len(e.comment) < 100 for e in comments)
+    assert all("<script>" not in e.comment and "https://" not in e.comment for e in comments)

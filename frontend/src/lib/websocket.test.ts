@@ -146,6 +146,62 @@ it('validates enriched comments, safe avatars, badges and activities', () => {
     ).toEqual([activity]);
 });
 
+it('keeps legacy gifts and strips only unsafe optional gift images', () => {
+    const digest = 'a'.repeat(64);
+    const gift = {
+        type: 'activity',
+        id: 'gift-image',
+        received_at: comment('gift-image').received_at,
+        user: comment('gift-image').user,
+        kind: 'gift',
+        gift_name: 'Rose',
+        count: 5,
+    };
+    expect(parseMessage(JSON.stringify(gift))).toEqual(gift);
+    for (const gift_image_url of [
+        `/gift-images/${digest}`,
+        '/demo-gift-rose.webp',
+        'https://example.com/gift.png',
+        null,
+    ]) {
+        expect(parseMessage(JSON.stringify({ ...gift, gift_image_url }))).toEqual({
+            ...gift,
+            gift_image_url,
+        });
+    }
+    for (const gift_image_url of [
+        'http://example.com/gift.png',
+        'javascript:alert(1)',
+        'https://user:secret@example.com/gift.png',
+        '/demo-gift-rose.svg',
+        '/demo-gift-rose.svg?extra=1',
+        '/demo-gift-rose.webp?extra=1',
+        '/demo-gift-rose.webp/',
+        '//demo-gift-rose.webp',
+        '/demo-gift-rose.WEBP',
+        '/demo-avatar-0.svg',
+        `/gift-images/${digest.slice(1)}`,
+        `/gift-images/${digest.toUpperCase()}`,
+        `/gift-images/${digest}?v=1`,
+        `/gift-images/${digest}/`,
+        `/other/${digest}`,
+        `//example.com/gift-images/${digest}`,
+        'https://example.com/' + 'a'.repeat(2048),
+        12,
+    ]) {
+        expect(parseMessage(JSON.stringify({ ...gift, gift_image_url }))).toEqual(gift);
+    }
+    expect(
+        parseMessage(
+            JSON.stringify({
+                ...gift,
+                kind: 'follow',
+                gift_image_url: 'https://example.com/gift.png',
+            }),
+        ),
+    ).toEqual({ ...gift, kind: 'follow' });
+});
+
 it('keeps comment text when optional profile data is invalid and never uses unsafe avatars', () => {
     const original = comment('optional');
     for (const avatar_url of [

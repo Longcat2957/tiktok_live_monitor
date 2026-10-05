@@ -21,6 +21,9 @@ async def test_reconnecting_mock_continues_sequence() -> None:
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+            while not queue.empty():
+                queue.get_nowait()
+                queue.task_done()
 
 
 def test_source_sink_bounds_queue_counts_drops_and_rate_limits_logs(caplog):

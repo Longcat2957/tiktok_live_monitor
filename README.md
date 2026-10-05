@@ -240,12 +240,27 @@ Node 빌드 단계와 Python 의존성 단계를 분리하며 최종 이미지�
 
 1. **checks:** 백엔드 pytest/mypy/Ruff, 셸 문법·업데이트 스크립트 안전성, 프론트엔드 lint/format:check/check/test/build, mock 브라우저 E2E 전체.
 2. **Container:** checks 성공 후 AMD64(`ubuntu-24.04`)와 ARM64(`ubuntu-24.04-arm`)에서 각각 운영 이미지를 빌드하고 격리된 컨테이너로 실행합니다. UI 정적 파일, health, HTTP/WebSocket 수신, 설정·재연결·종료 및 실행 권한을 검증합니다.
+3. **Docker Hub:** `main` 푸시에서는 검증한 이미지를 그대로 [longcat1132/tiktok-live-monitor](https://hub.docker.com/r/longcat1132/tiktok-live-monitor)에 업로드합니다. 두 아키텍처가 모두 성공하면 **Publish**가 AMD64/ARM64 통합 이미지를 발행합니다. PR과 수동 실행은 검사만 수행합니다.
 
 브라우저 HTML 보고서와 실패 trace·스크린샷은 Actions의 `browser-results` artifact에 7일간 보관합니다. TikTok 인증 없이 mock만 사용하며 테스트 컨테이너는 사용자의 `.env`와 기존 8000번 서비스를 건드리지 않습니다. ARM64 검증은 [GitHub의 ARM64 runner](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)에서 실행하며 실제 Pi의 GUI·부팅 복구 검증은 현장에서 진행합니다.
 
-uv/pnpm 의존성을 lockfile 기준으로 설치하고 다운로드 캐시를 재사용합니다. 같은 브랜치 또는 PR의 새 실행은 이전 실행을 취소하며, 각 작업의 제한 시간은 20분입니다. 실패한 검사는 자동 재시도로 숨기지 않습니다.
+uv/pnpm 의존성을 lockfile 기준으로 설치하고 다운로드 캐시를 재사용합니다. 같은 브랜치 또는 PR의 새 실행은 이전 실행을 취소하며, 검증 작업의 제한 시간은 20분, Publish는 10분입니다. 실패한 검사는 자동 재시도로 숨기지 않습니다.
 
-Pi 업데이트는 기존 `scripts/install.sh`와 `scripts/update.sh`를 사용합니다. 이미지 레지스트리 발행이나 Pi 자동 배포는 수행하지 않습니다. 업데이트할 커밋의 checks와 두 Container 작업이 모두 통과했는지 확인하세요.
+Docker Hub의 `longcat1132` 계정에서 **Read & Write** 권한의 [Personal Access Token](https://docs.docker.com/security/access-tokens/personal-access-tokens/)을 생성하고, GitHub 저장소 **Settings → Secrets and variables → Actions → New repository secret**에 `DOCKERHUB_TOKEN`으로 등록합니다. 계정명은 workflow에 지정되어 별도 username secret은 필요 없습니다. public 저장소도 push에는 인증이 필요하며 토큰이 없거나 권한이 부족하면 발행 작업은 실패합니다.
+
+| 이미지 태그 | 용도 |
+| --- | --- |
+| `latest` | 두 아키텍처 검증을 통과한 최신 `main` 이미지 |
+| `sha-<전체 커밋 SHA>` | 특정 커밋의 AMD64/ARM64 통합 이미지 |
+| `sha-<전체 커밋 SHA>-amd64`, `sha-<전체 커밋 SHA>-arm64` | 통합 발행에 사용하는 각 아키텍처 이미지 |
+
+공개 이미지는 로그인 없이 받을 수 있으며 Pi 64-bit에서는 ARM64 이미지가 선택됩니다.
+
+```bash
+docker pull longcat1132/tiktok-live-monitor:latest
+```
+
+Pi의 `scripts/install.sh`와 `scripts/update.sh`는 계속 소스를 직접 빌드합니다. Docker Hub 업로드는 Pi 자동 배포를 수행하지 않습니다. 업데이트할 커밋의 checks와 두 Container 작업이 모두 통과했는지 확인하세요.
 
 운영 컨테이너 검증은 로컬에서도 실행할 수 있습니다(Docker Engine, Compose 2.24.4 이상, curl 필요).
 

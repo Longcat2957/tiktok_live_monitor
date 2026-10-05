@@ -172,4 +172,8 @@ SMOKE_EXIT="$(docker inspect --format '{{.State.ExitCode}}' "$SMOKE_CONTAINER")"
 [[ "$SMOKE_EXIT" == 0 || "$SMOKE_EXIT" == 143 ]]
 "${compose[@]}" logs --no-color app >"$SMOKE_DIR/container.log"
 grep -q 'Application shutdown complete' "$SMOKE_DIR/container.log"
+if [[ -n "${SMOKE_PUBLISH_TAG:-}" ]]; then
+  # Keep the exact tested image for CI publication after the smoke tag is removed.
+  docker tag "$SMOKE_IMAGE" "$SMOKE_PUBLISH_TAG"
+fi
 echo 'Container smoke passed: non-root, read-only, localhost-only and clean shutdown.'

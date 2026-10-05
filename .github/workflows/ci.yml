@@ -97,9 +97,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
+    env:
+      SMOKE_PUBLISH_TAG: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('longcat1132/tiktok-live-monitor:sha-{0}-{1}', github.sha, matrix.arch) || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -107,3 +113,42 @@ jobs:
 
       - name: Build and test production container
         run: ./scripts/test-container.sh
+
+      - name: Push tested image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$SMOKE_PUBLISH_TAG")" == 'linux/${{ matrix.arch }}' ]]
+          if [[ -z "$DOCKERHUB_TOKEN" ]]; then
+            echo 'DOCKERHUB_TOKEN is not configured' >&2
+            exit 1
+          fi
+          printf '%s' "$DOCKERHUB_TOKEN" | docker login --username longcat1132 --password-stdin
+          docker push "$SMOKE_PUBLISH_TAG"
+
+  publish:
+    name: Publish
+    needs: container
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      REPOSITORY: longcat1132/tiktok-live-monitor
+      IMAGE_SHA: sha-${{ github.sha }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: Publish multi-platform image
+        run: |
+          if [[ -z "$DOCKERHUB_TOKEN" ]]; then
+            echo 'DOCKERHUB_TOKEN is not configured' >&2
+            exit 1
+          fi
+          printf '%s' "$DOCKERHUB_TOKEN" | docker login --username longcat1132 --password-stdin
+          docker buildx imagetools create \
+            -t "$REPOSITORY:latest" \
+            -t "$REPOSITORY:$IMAGE_SHA" \
+            "$REPOSITORY:$IMAGE_SHA-amd64" \
+            "$REPOSITORY:$IMAGE_SHA-arm64"
+          docker buildx imagetools inspect "$REPOSITORY:$IMAGE_SHA" --raw |
+            python3 -c 'import json, sys; actual = sorted((item["platform"]["os"], item["platform"]["architecture"]) for item in json.load(sys.stdin)["manifests"] if item["platform"]["os"] == "linux"); expected = [("linux", "amd64"), ("linux", "arm64")]; sys.exit(0 if actual == expected else f"Unexpected image platforms: {actual}")'

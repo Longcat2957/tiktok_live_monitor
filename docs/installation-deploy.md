@@ -8,7 +8,7 @@ Raspberry Pi 4 + Raspberry Pi OS Desktop 64-bit용입니다. 아래 명령은 Pi
 - Docker Compose가 FastAPI와 빌드된 Svelte UI를 컨테이너 하나로 실행합니다.
 - Chromium은 호스트에서 실행하며 `http://127.0.0.1:8000`에 접속합니다. 다른 PC에서 Pi의 IP로 접근하는 구성은 아닙니다.
 - Pi가 소스를 직접 빌드합니다. 호스트에 Python/uv/Node/pnpm을 설치할 필요는 없습니다.
-- GitHub Actions는 코드·브라우저 테스트와 AMD64/ARM64 운영 컨테이너 빌드·실행 검증을 수행합니다. Pi 업데이트는 아래 스크립트로 진행하며 이미지 레지스트리나 자동 배포는 사용하지 않습니다.
+- GitHub Actions는 코드·브라우저 테스트와 AMD64/ARM64 운영 컨테이너 빌드·실행 검증을 수행하고, `main` 푸시에서 검증한 이미지를 Docker Hub의 `longcat1132/tiktok-live-monitor`에 발행합니다. [태그와 인증 설정](../README.md#github-actions-ci)을 참고하세요. 아래 Pi 설치·업데이트 스크립트는 소스를 직접 빌드하며 자동 배포는 수행하지 않습니다.
 - 댓글은 영구 저장하지 않습니다. 컨테이너는 non-root, 읽기 전용 루트 파일시스템으로 실행됩니다.
 
 ## 2. 장비 설치

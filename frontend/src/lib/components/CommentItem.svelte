@@ -123,8 +123,8 @@
         display: flex;
         align-items: center;
         flex-wrap: wrap;
-        gap: 6px 10px;
-        margin-bottom: 10px;
+        gap: calc(6px * var(--comment-scale, 1)) calc(10px * var(--comment-scale, 1));
+        margin-bottom: calc(10px * var(--comment-scale, 1));
     }
     .mention {
         color: var(--m3c-on-secondary-container);
@@ -139,8 +139,8 @@
         margin: 0;
     }
     .avatar {
-        width: max(40px, calc(80px * var(--comment-scale, 1)));
-        height: max(40px, calc(80px * var(--comment-scale, 1)));
+        width: calc(80px * var(--comment-scale, 1));
+        height: calc(80px * var(--comment-scale, 1));
         flex-shrink: 0;
         display: inline-flex;
         align-items: center;
@@ -149,7 +149,7 @@
         border-radius: 50%;
         background: var(--m3c-surface-container-high);
         color: var(--m3c-on-surface-variant);
-        font-size: max(24px, calc(36px * var(--comment-scale, 1)));
+        font-size: calc(36px * var(--comment-scale, 1));
     }
     .avatar img {
         width: 100%;
@@ -158,9 +158,9 @@
     }
     .user-badge,
     .activity-label {
-        border-radius: 8px;
-        padding: 4px 12px;
-        font-size: max(20px, calc(24px * var(--comment-scale, 1)));
+        border-radius: calc(8px * var(--comment-scale, 1));
+        padding: calc(4px * var(--comment-scale, 1)) calc(12px * var(--comment-scale, 1));
+        font-size: calc(24px * var(--comment-scale, 1));
         font-weight: 700;
         max-width: 100%;
         overflow-wrap: anywhere;
@@ -174,10 +174,10 @@
         background: var(--m3c-secondary-container);
     }
     .comment.activity {
-        margin-block: 8px;
-        padding: clamp(18px, 2.7vw, 30px);
+        margin-block: calc(8px * var(--comment-scale, 1));
+        padding: calc(clamp(18px, 2.7vw, 30px) * var(--comment-scale, 1));
         border: 0;
-        border-radius: 16px;
+        border-radius: calc(16px * var(--comment-scale, 1));
         background: color-mix(in srgb, var(--activity-accent) 24%, var(--m3c-surface));
         color: var(--m3c-on-surface);
     }
@@ -197,8 +197,8 @@
         display: flex;
         align-items: center;
         flex-wrap: wrap;
-        gap: 8px 12px;
-        margin-bottom: 12px;
+        gap: calc(8px * var(--comment-scale, 1)) calc(12px * var(--comment-scale, 1));
+        margin-bottom: calc(12px * var(--comment-scale, 1));
     }
     .activity .nickname {
         flex: 1 1 8ch;
@@ -213,9 +213,9 @@
         line-height: 1.3;
     }
     .activity-label {
-        padding: 8px 16px;
-        border: 2px solid currentColor;
-        font-size: max(24px, calc(clamp(26px, 3.6vw, 40px) * var(--comment-scale, 1)));
+        padding: calc(8px * var(--comment-scale, 1)) calc(16px * var(--comment-scale, 1));
+        border: calc(2px * var(--comment-scale, 1)) solid currentColor;
+        font-size: calc(clamp(26px, 3.6vw, 40px) * var(--comment-scale, 1));
         overflow-wrap: anywhere;
     }
 </style>

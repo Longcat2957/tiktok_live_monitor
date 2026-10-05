@@ -1,18 +1,7 @@
 <script lang="ts">
-    import { Chip } from 'm3-svelte';
     let { username }: { username: string | null } = $props();
     let feedback = $state<'copied' | 'error' | null>(null);
     let busy = $state(false);
-    const copyIcon = {
-        width: 24,
-        height: 24,
-        body: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M8 8h12v13H8zM16 8V3H3v13h5"/>',
-    };
-    const checkIcon = {
-        width: 24,
-        height: 24,
-        body: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m5 12 4 4L19 6"/>',
-    };
     let label = $derived(
         feedback === 'copied'
             ? '아이디 복사됨'
@@ -40,63 +29,94 @@
     }
 </script>
 
-<div class="account-chip" data-feedback={feedback}>
+<div class="broadcast-account" data-feedback={feedback}>
     {#if username}
-        <Chip
-            variant="assist"
-            trailingIcon={feedback === 'copied' ? checkIcon : copyIcon}
+        <button
+            type="button"
+            class="account-copy"
             onclick={copyAccount}
             disabled={busy}
             aria-label="방송 아이디 복사"
-            title={`${'@' + username} · ${label}`}
+            title={`@${username} · ${label}`}
         >
             <span class="account-name">@{username}</span>
-        </Chip>
+            <svg
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                {#if feedback === 'copied'}
+                    <path d="m5 12 4 4L19 6" />
+                {:else}
+                    <path d="M8 8h12v13H8zM16 8V3H3v13h5" />
+                {/if}
+            </svg>
+        </button>
     {:else}
-        <span class="demo-chip">DEMO</span>
+        <span class="demo-label">DEMO</span>
     {/if}
     <span class="copy-feedback" role="status">{feedback ? label : ''}</span>
 </div>
 
 <style>
     .account-name {
+        display: block;
         min-width: 0;
-        margin: 0;
-        font-weight: 700;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
     }
-    .account-chip {
+    .broadcast-account {
         position: relative;
         min-width: 0;
         max-width: 100%;
-        --m3-chip-shape: 999px;
     }
-    .account-chip :global(button),
-    .demo-chip {
-        max-width: 100%;
-        min-height: 44px;
-        padding-inline: 14px;
-        background: var(--m3c-secondary-container);
-        color: var(--m3c-on-secondary-container);
-        border: 1px solid var(--m3c-secondary);
-        border-radius: 999px;
-        font-weight: 700;
-    }
-    .account-chip :global(button > span) {
-        min-width: 0;
-        overflow: hidden;
-    }
-    .account-chip :global(svg) {
-        flex-shrink: 0;
-    }
-    .account-name {
-        display: block;
-    }
-    .demo-chip {
+    .account-copy {
         display: inline-flex;
         align-items: center;
+        gap: 8px;
+        min-width: 0;
+        max-width: 100%;
+        min-height: 44px;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: var(--m3c-on-surface);
+        font: inherit;
+        font-size: 0.95rem;
+        font-weight: 750;
+        cursor: pointer;
+    }
+    .account-copy:hover .account-name {
+        text-decoration: underline;
+        text-underline-offset: 0.2em;
+    }
+    .account-copy:focus-visible {
+        outline: 2px solid var(--m3c-secondary);
+        outline-offset: 4px;
+    }
+    .account-copy:disabled {
+        opacity: 0.5;
+        cursor: wait;
+    }
+    .account-copy svg {
+        flex-shrink: 0;
+        width: 16px;
+        height: 16px;
+        color: var(--m3c-on-surface-variant);
+    }
+    .demo-label {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        color: var(--m3c-secondary);
     }
     .copy-feedback {
         position: absolute;
@@ -105,16 +125,10 @@
         z-index: 2;
         font-size: 0.7rem;
         white-space: nowrap;
-    }
-    .copy-feedback:not(:empty) {
-        padding: 4px 8px;
-        border-radius: 6px;
-        background: var(--m3c-secondary-container);
-        color: var(--m3c-on-secondary-container);
+        color: var(--m3c-secondary);
     }
     [data-feedback='error'] .copy-feedback {
-        background: var(--m3c-error-container);
-        color: var(--m3c-on-error-container);
+        color: var(--m3c-error);
         white-space: normal;
         width: max-content;
         max-width: min(280px, 80vw);

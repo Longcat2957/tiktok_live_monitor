@@ -820,7 +820,9 @@ test('mock shows profiles, badges, all activities and broadcast lifecycle indepe
     await expect(page.locator('.activity')).toHaveCount(0);
 });
 
-test('account chip copies the handle and reports clipboard failure', async ({ page }) => {
+test('broadcast account copies by click and Enter and reports clipboard failure', async ({
+    page,
+}) => {
     await page.addInitScript(() => {
         Object.defineProperty(navigator, 'clipboard', {
             configurable: true,
@@ -837,18 +839,21 @@ test('account chip copies the handle and reports clipboard failure', async ({ pa
                 source: 'tiktok',
                 state: 'connected',
                 message: '',
-                session_id: 'chip-test',
+                session_id: 'account-test',
                 username: 'test_account',
                 comment_history_size: 30,
             }),
         ),
     );
     await page.goto('/');
-    const chip = page.getByRole('button', { name: '방송 아이디 복사', exact: true });
-    await expect(chip).toHaveText('@test_account');
-    await chip.click();
+    const account = page.getByRole('button', { name: '방송 아이디 복사', exact: true });
+    await expect(account).toHaveText('@test_account');
+    await account.click();
     expect(await page.evaluate(() => Reflect.get(window, 'copiedId'))).toBe('@test_account');
     await expect(page.locator('.copy-feedback')).toHaveText('아이디 복사됨');
+    await page.evaluate(() => Reflect.deleteProperty(window, 'copiedId'));
+    await account.press('Enter');
+    expect(await page.evaluate(() => Reflect.get(window, 'copiedId'))).toBe('@test_account');
     await page.evaluate(() =>
         Object.defineProperty(navigator, 'clipboard', {
             value: {
@@ -858,7 +863,7 @@ test('account chip copies the handle and reports clipboard failure', async ({ pa
             },
         }),
     );
-    await chip.click();
+    await account.click();
     await expect(page.locator('.copy-feedback')).toContainText('복사하지 못했습니다');
 });
 
@@ -1330,4 +1335,158 @@ test('a new UI build reloads the open page, but a failed or unchanged version ch
     await page.clock.runFor(30_100);
     await expect.poll(() => checks).toBe(4);
     expect(navigations).toBe(2);
+});
+
+test('font scale resizes comment content while broadcast information stays fixed', async ({
+    page,
+}) => {
+    let send: (data: object) => void;
+    const username = `scale.account_${'long_'.repeat(12)}`;
+    const status = (username: string | null) => ({
+        type: 'status',
+        source: username ? 'tiktok' : 'mock',
+        state: 'connected',
+        message: '',
+        session_id: 'font-scale-details',
+        username,
+        comment_history_size: 30,
+        live: { state: 'live', viewers: 1234, likes: 56789 },
+    });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.routeWebSocket('**/ws', (socket) => {
+        send = (data) => socket.send(JSON.stringify(data));
+        send(status(username));
+        const user = { nickname: '', unique_id: 'fallback-id', avatar_url: '/demo-avatar-0.svg' };
+        send({
+            type: 'comment',
+            id: 'scaled-comment',
+            received_at: '2026-10-05T00:00:00Z',
+            user: {
+                ...user,
+                badges: [
+                    { kind: 'fan', level: 1 },
+                    { kind: 'subscriber', level: null },
+                ],
+            },
+            comment: '댓글 크기 확인',
+        });
+        for (const kind of ['gift', 'share', 'subscribe'])
+            send({
+                type: 'activity',
+                id: `scaled-${kind}`,
+                received_at: '2026-10-05T00:00:01Z',
+                user,
+                kind,
+                gift_name: '장미',
+                count: 1,
+            });
+    });
+    await page.goto('/');
+    await expect(page.locator('.nickname')).toHaveText(Array(4).fill('fallback-id'));
+    await expect(page.locator('.user-badge')).toHaveText(['팬 Lv.1', '구독자']);
+    await expect(page.locator('.activity-label')).toHaveText(['선물', '공유', '구독']);
+    await expect(page.locator('.account-name')).toHaveText(`@${username}`);
+    await expect(page.locator('.live-metrics dt')).toHaveText(['시청자', '좋아요']);
+    await expect(page.locator('.live-metrics strong')).toHaveText(['1,234', '56,789']);
+    await expect(page.locator('.live-metrics svg')).toHaveCount(2);
+    const sizes = (fixed = false) =>
+        page.evaluate((fixed) => {
+            const read = (selector: string, properties: string[]) =>
+                [...document.querySelectorAll(selector)].flatMap((node) => {
+                    const css = getComputedStyle(node);
+                    return properties.map((property) => parseFloat(css.getPropertyValue(property)));
+                });
+            if (fixed)
+                return [
+                    ...read(
+                        '.account-name, .live-metrics dt, .live-metrics dd, .live-metrics strong',
+                        ['font-size'],
+                    ),
+                    ...read('.live-metrics svg', ['width', 'height']),
+                    ...read('.broadcast-account button', [
+                        'width',
+                        'height',
+                        'padding-left',
+                        'padding-right',
+                        'column-gap',
+                    ]),
+                    ...read('.broadcast-account svg', ['width', 'height', 'margin-right']),
+                ];
+            return [
+                ...read('.comment .nickname, .comment .body', ['font-size']),
+                ...read('.user-badge, .activity-label', [
+                    'font-size',
+                    'padding-top',
+                    'padding-right',
+                    'border-top-left-radius',
+                ]),
+                ...read('.avatar', ['width', 'height', 'font-size']),
+                ...read('.comment.activity', [
+                    'padding-top',
+                    'padding-right',
+                    'padding-bottom',
+                    'padding-left',
+                    'margin-top',
+                    'margin-bottom',
+                    'border-top-left-radius',
+                ]),
+            ];
+        }, fixed);
+    const original = await sizes();
+    const fixedOriginal = await sizes(true);
+    send!(status(null));
+    const demo = page.locator('.demo-label');
+    await expect(demo).toHaveText('DEMO');
+    const demoSize = () =>
+        demo.evaluate((node) => {
+            const css = getComputedStyle(node);
+            return ['font-size', 'width', 'height', 'padding-left', 'padding-right'].map(
+                (property) => parseFloat(css.getPropertyValue(property)),
+            );
+        });
+    const originalDemoSize = await demoSize();
+    send!(status(username));
+    await expect(page.locator('.account-name')).toHaveText(`@${username}`);
+
+    let current = 100;
+    for (const scale of [100, 95, 20, 200]) {
+        const button = page.getByRole('button', {
+            name: scale < current ? '댓글 글자 작게' : '댓글 글자 크게',
+            exact: true,
+        });
+        for (let step = 0; step < Math.abs(scale - current) / 5; step++) await button.click();
+        current = scale;
+        await expect(page.locator('.font-scale-control output')).toContainText(`${scale}%`);
+        await expect
+            .poll(async () => {
+                const values = await sizes();
+                expect(values).toHaveLength(original.length);
+                return Math.max(
+                    ...values.map((value, index) =>
+                        Math.abs(value - (original[index] * scale) / 100),
+                    ),
+                );
+            })
+            .toBeLessThan(0.1);
+        await expect.poll(() => sizes(true)).toEqual(fixedOriginal);
+        expect(
+            (await page.getByRole('button', { name: '방송 아이디 복사' }).boundingBox())!.height,
+        ).toBeGreaterThanOrEqual(44);
+        if (scale === 200)
+            expect(
+                await page.evaluate(() => {
+                    const feed = document.querySelector('.comment-viewport')!;
+                    return (
+                        document.documentElement.scrollWidth <= innerWidth &&
+                        feed.scrollWidth <= feed.clientWidth
+                    );
+                }),
+            ).toBe(true);
+        send!(status(null));
+        await expect(demo).toHaveText('DEMO');
+        await expect.poll(demoSize).toEqual(originalDemoSize);
+        send!(status(username));
+        await expect(page.locator('.account-name')).toHaveText(`@${username}`);
+    }
 });

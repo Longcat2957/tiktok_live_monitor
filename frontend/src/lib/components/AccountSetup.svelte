@@ -60,29 +60,31 @@
         <p>방송을 연결하거나 데모로 먼저 둘러보세요.</p>
     </div>
     <form onsubmit={submit}>
-        <fieldset disabled={blocked}>
-            <legend>방송 또는 데모</legend>
-            <ConnectedButtons>
-                <Button variant="tonal" size="m" square label>
-                    <input
-                        type="radio"
-                        name="mode"
-                        value="tiktok"
-                        bind:group={mode}
-                        onchange={() => (error = '')}
-                    />실제 방송
-                </Button>
-                <Button variant="tonal" size="m" square label>
-                    <input
-                        type="radio"
-                        name="mode"
-                        value="mock"
-                        bind:group={mode}
-                        onchange={() => (error = '')}
-                    />데모 체험
-                </Button>
-            </ConnectedButtons>
-        </fieldset>
+        <div class="setup-options">
+            <fieldset disabled={blocked}>
+                <legend>방송 또는 데모</legend>
+                <ConnectedButtons>
+                    <Button variant="tonal" size="m" square label>
+                        <input
+                            type="radio"
+                            name="mode"
+                            value="tiktok"
+                            bind:group={mode}
+                            onchange={() => (error = '')}
+                        />실제 방송
+                    </Button>
+                    <Button variant="tonal" size="m" square label>
+                        <input
+                            type="radio"
+                            name="mode"
+                            value="mock"
+                            bind:group={mode}
+                            onchange={() => (error = '')}
+                        />데모 체험
+                    </Button>
+                </ConnectedButtons>
+            </fieldset>
+        </div>
         <div class="mode-details">
             <div class="mode-content" aria-hidden={mode !== 'tiktok'} inert={mode !== 'tiktok'}>
                 <div class="account-field">
@@ -121,8 +123,8 @@
             <Button type="submit" size="m" square disabled={blocked || backend !== 'connected'}
                 >{saving ? '시작 준비 중…' : '시작'}</Button
             >
+            <p class="session-note">장비를 다시 켜면 모드를 선택하고 다시 시작해주세요.</p>
         </div>
-        <p class="session-note">장비를 다시 켜면 모드를 선택하고 다시 시작해주세요.</p>
     </form>
 </section>
 
@@ -134,11 +136,15 @@
         display: flex;
         flex-direction: column;
         justify-content: safe center;
-        gap: 36px;
-        max-width: 840px;
+        gap: clamp(24px, 3vh, 48px);
+        max-width: 680px;
         width: 100%;
         margin-inline: auto;
         padding: 24px 4px;
+    }
+    .setup-intro {
+        flex-shrink: 0;
+        text-align: center;
     }
     .eyebrow {
         color: var(--m3c-secondary);
@@ -163,12 +169,16 @@
         line-height: 1.6;
     }
     form {
+        flex-shrink: 0;
         display: flex;
         flex-direction: column;
-        gap: 24px;
-        padding: clamp(20px, 3vw, 36px);
+        gap: 20px;
+    }
+    .setup-options,
+    .mode-details {
+        padding: clamp(20px, 3vw, 32px);
         border: 1px solid var(--m3c-outline-variant);
-        border-radius: 24px;
+        border-radius: 20px;
         background: var(--m3c-surface-container-low);
     }
     fieldset {
@@ -197,6 +207,7 @@
     }
     .mode-content[aria-hidden='true'] {
         visibility: hidden;
+        opacity: 0;
     }
     .account-field {
         display: flex;
@@ -236,16 +247,15 @@
     }
     .account-actions {
         display: flex;
+        flex-direction: column;
         gap: 12px;
-    }
-    .account-actions > :global(button:first-child) {
-        flex: 1;
     }
     form [role='alert'] {
         color: var(--m3c-error);
     }
     form .session-note {
         font-size: 0.7rem;
+        text-align: center;
     }
     @media (width < 480px) {
         .account-panel {

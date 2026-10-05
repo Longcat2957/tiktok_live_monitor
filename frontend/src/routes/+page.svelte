@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount, tick } from 'svelte';
     import AccountSetup from '$lib/components/AccountSetup.svelte';
+    import BuildVersion from '$lib/components/BuildVersion.svelte';
     import CommentList from '$lib/components/CommentList.svelte';
     import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
     import LiveSummary from '$lib/components/LiveSummary.svelte';
@@ -97,14 +98,14 @@
             />{/key}
     {/if}
     <footer>
-        <p
-            class="broadcast-state"
-            data-state={view.tone}
-            role="status"
-            title={showSetup ? undefined : view.label}
-        >
-            {showSetup ? '' : view.label}
-        </p>
+        <div class="footer-info">
+            {#if !showSetup}
+                <p class="broadcast-state" data-state={view.tone} role="status" title={view.label}>
+                    {view.label}
+                </p>
+            {/if}
+            <BuildVersion />
+        </div>
         <ConnectionStatus backend={session.backend} />
     </footer>
 </main>
@@ -162,6 +163,13 @@
         flex-shrink: 0;
         border-top: 1px solid var(--m3c-outline-variant);
         padding-top: 16px;
+    }
+    .footer-info {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
     }
     .broadcast-state {
         min-width: 0;

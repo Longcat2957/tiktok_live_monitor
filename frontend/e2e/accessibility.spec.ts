@@ -1,7 +1,12 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
+
+const { version: appVersion } = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+);
 
 const baseURL = 'http://127.0.0.1:18768';
 test.use({ baseURL });
@@ -91,6 +96,13 @@ async function expectNoHorizontalOverflow(page: Page) {
         }),
     ).toBe(true);
 }
+
+test('footer shows the package version', async ({ page }) => {
+    await page.goto('/');
+    const label = page.locator('footer .build-version');
+    await expect(label).toHaveText(`v${appVersion}`);
+    await expect(label).toHaveAttribute('title', `프론트엔드 버전 ${appVersion}`);
+});
 
 test('setup theme can be changed with the keyboard and survives reload', async ({ page }) => {
     await page.goto('/');

@@ -8,7 +8,7 @@ Raspberry Pi 4 + Raspberry Pi OS Desktop 64-bit용입니다. 아래 명령은 Pi
 - Docker Compose가 FastAPI와 빌드된 Svelte UI를 컨테이너 하나로 실행합니다.
 - Chromium은 호스트에서 실행하며 `http://127.0.0.1:8000`에 접속합니다. 다른 PC에서 Pi의 IP로 접근하는 구성은 아닙니다.
 - Pi가 소스를 직접 빌드합니다. 호스트에 Python/uv/Node/pnpm을 설치할 필요는 없습니다.
-- GitHub Actions는 코드·브라우저 테스트와 AMD64/ARM64 운영 컨테이너 빌드·실행 검증을 수행하고, `main` 푸시에서 검증한 이미지를 Docker Hub의 `longcat1132/tiktok-live-monitor`에 발행합니다. [태그와 인증 설정](../README.md#github-actions-ci)을 참고하세요. 아래 Pi 설치·업데이트 스크립트는 소스를 직접 빌드하며 자동 배포는 수행하지 않습니다.
+- GitHub Actions는 `dev`에서 Frontend CI·Backend CI로 코드·브라우저 테스트를 각각 실행합니다. `main`의 Docker CI는 AMD64/ARM64 운영 컨테이너 빌드·실행을 검증하고 `main` 푸시에서 이미지를 Docker Hub의 `longcat1132/tiktok-live-monitor`에 발행합니다. [태그와 인증 설정](../README.md#github-actions-ci)을 참고하세요. 아래 Pi 설치·업데이트 스크립트는 소스를 직접 빌드하며 자동 배포는 수행하지 않습니다.
 - 댓글은 영구 저장하지 않습니다. 컨테이너는 non-root, 읽기 전용 루트 파일시스템으로 실행됩니다.
 
 ## 2. 장비 설치
@@ -81,7 +81,7 @@ curl --fail --output /dev/null http://127.0.0.1:8000/
 
 ## 4. 업데이트와 운영
 
-방송이 끝난 뒤 실행하세요. 로컬 변경이 있다면 먼저 커밋하거나 별도로 보관합니다. GitHub의 업데이트 대상 커밋에서 checks와 AMD64/ARM64 Container 작업이 모두 통과했는지 확인하세요. 스크립트가 CI 통과 여부를 대신 검사하지는 않습니다.
+방송이 끝난 뒤 실행하세요. 로컬 변경이 있다면 먼저 커밋하거나 별도로 보관합니다. GitHub의 업데이트 대상 커밋에서 dev의 Frontend CI·Backend CI와 main의 Docker CI가 모두 통과했는지 확인하세요. 스크립트가 CI 통과 여부를 대신 검사하지는 않습니다.
 
 ```bash
 cd ~/tiktok_live_monitor

@@ -1,5 +1,7 @@
 # TikTok LIVE 세로형 댓글 모니터
 
+현재 기준 버전은 **v1.0.0**입니다. 프론트엔드·백엔드 패키지는 `1.0.0`이며 화면 푸터는 프론트엔드 패키지 버전에서 읽습니다.
+
 Raspberry Pi 4 + Raspberry Pi OS Desktop 64-bit에서 실행하는 한 계정 전용 댓글 모니터입니다. 모든 일반 댓글을 받은 순서대로 표시하며, 기본적으로 최신 댓글·활동 알림 30개만 보관합니다. TikTok 연결 및 브라우저 연결은 자동으로 복구됩니다. 댓글 저장, 분류, 로그인, 외부 DB는 없습니다.
 
 ## 설치 가이드
@@ -235,16 +237,21 @@ Node 빌드 단계와 Python 의존성 단계를 분리하며 최종 이미지�
 
 ## GitHub Actions CI
 
-`main` 푸시 및 `main` 대상 PR에서 [CI](https://github.com/Longcat2957/tiktok_live_monitor/actions/workflows/ci.yml)가 실행됩니다.
-수동 실행(`workflow_dispatch`)도 지원하며 다음 순서로 검사합니다.
+브랜치별로 다음 세 workflow를 실행합니다. 각각 수동 실행(`workflow_dispatch`)도 지원합니다.
 
-1. **checks:** 백엔드 pytest/mypy/Ruff, 셸 문법·업데이트 스크립트 안전성, 프론트엔드 lint/format:check/check/test/build, mock 브라우저 E2E 전체.
-2. **Container:** checks 성공 후 AMD64(`ubuntu-24.04`)와 ARM64(`ubuntu-24.04-arm`)에서 각각 운영 이미지를 빌드하고 격리된 컨테이너로 실행합니다. UI 정적 파일, health, HTTP/WebSocket 수신, 설정·재연결·종료 및 실행 권한을 검증합니다.
-3. **Docker Hub:** `main` 푸시에서는 검증한 이미지를 그대로 [longcat1132/tiktok-live-monitor](https://hub.docker.com/r/longcat1132/tiktok-live-monitor)에 업로드합니다. 두 아키텍처가 모두 성공하면 **Publish**가 AMD64/ARM64 통합 이미지를 발행합니다. PR과 수동 실행은 검사만 수행합니다.
+| Workflow | 자동 실행 | 검사·발행 내용 |
+| --- | --- | --- |
+| [Frontend CI](https://github.com/Longcat2957/tiktok_live_monitor/actions/workflows/frontend-ci.yml) | `dev` 푸시, `dev` 대상 PR | lint, format:check, TypeScript/Svelte check, 단위 테스트, 정적 빌드, mock 브라우저 E2E |
+| [Backend CI](https://github.com/Longcat2957/tiktok_live_monitor/actions/workflows/backend-ci.yml) | `dev` 푸시, `dev` 대상 PR | pytest, mypy, Ruff, 셸 문법, 업데이트·autostart 스크립트 테스트 |
+| [Docker CI](https://github.com/Longcat2957/tiktok_live_monitor/actions/workflows/ci.yml) | `main` 푸시, `main` 대상 PR | AMD64/ARM64 이미지 빌드·컨테이너 실행 검증, `main` 푸시에서 Docker Hub 발행 |
+
+Frontend CI와 Backend CI는 독립적으로 실행합니다. 프론트엔드 E2E가 mock 백엔드를 직접 시작하므로 Frontend CI에도 백엔드 런타임 의존성을 설치합니다. `dev`의 두 CI가 모두 성공한 커밋을 `main`으로 반영하세요.
+
+Docker CI는 AMD64(`ubuntu-24.04`)와 ARM64(`ubuntu-24.04-arm`)에서 각각 운영 이미지를 빌드하고 격리된 컨테이너로 실행합니다. UI 정적 파일, health, HTTP/WebSocket 수신, 설정·재연결·종료 및 실행 권한을 검증합니다. `main` 푸시에서는 검증한 이미지를 그대로 [longcat1132/tiktok-live-monitor](https://hub.docker.com/r/longcat1132/tiktok-live-monitor)에 업로드하고, 두 아키텍처가 모두 성공하면 **Publish**가 통합 이미지를 발행합니다. PR과 수동 실행은 컨테이너 검사만 수행합니다.
 
 브라우저 HTML 보고서와 실패 trace·스크린샷은 Actions의 `browser-results` artifact에 7일간 보관합니다. TikTok 인증 없이 mock만 사용하며 테스트 컨테이너는 사용자의 `.env`와 기존 8000번 서비스를 건드리지 않습니다. ARM64 검증은 [GitHub의 ARM64 runner](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)에서 실행하며 실제 Pi의 GUI·부팅 복구 검증은 현장에서 진행합니다.
 
-uv/pnpm 의존성을 lockfile 기준으로 설치하고 다운로드 캐시를 재사용합니다. 같은 브랜치 또는 PR의 새 실행은 이전 실행을 취소하며, 검증 작업의 제한 시간은 20분, Publish는 10분입니다. 실패한 검사는 자동 재시도로 숨기지 않습니다.
+uv/pnpm 의존성을 lockfile 기준으로 설치하고 다운로드 캐시를 재사용합니다. 같은 workflow의 같은 브랜치 또는 PR에서 새 실행은 이전 실행을 취소하며, 검증 작업의 제한 시간은 20분, Publish는 10분입니다. 실패한 검사는 자동 재시도로 숨기지 않습니다.
 
 Docker Hub의 `longcat1132` 계정에서 **Read & Write** 권한의 [Personal Access Token](https://docs.docker.com/security/access-tokens/personal-access-tokens/)을 생성하고, GitHub 저장소 **Settings → Secrets and variables → Actions → New repository secret**에 `DOCKERHUB_TOKEN`으로 등록합니다. 계정명은 workflow에 지정되어 별도 username secret은 필요 없습니다. public 저장소도 push에는 인증이 필요하며 토큰이 없거나 권한이 부족하면 발행 작업은 실패합니다.
 
@@ -260,7 +267,7 @@ Docker Hub의 `longcat1132` 계정에서 **Read & Write** 권한의 [Personal Ac
 docker pull longcat1132/tiktok-live-monitor:latest
 ```
 
-Pi의 `scripts/install.sh`와 `scripts/update.sh`는 계속 소스를 직접 빌드합니다. Docker Hub 업로드는 Pi 자동 배포를 수행하지 않습니다. 업데이트할 커밋의 checks와 두 Container 작업이 모두 통과했는지 확인하세요.
+Pi의 `scripts/install.sh`와 `scripts/update.sh`는 계속 소스를 직접 빌드합니다. Docker Hub 업로드는 Pi 자동 배포를 수행하지 않습니다. 업데이트할 커밋의 Frontend CI·Backend CI·Docker CI가 모두 통과했는지 확인하세요.
 
 운영 컨테이너 검증은 로컬에서도 실행할 수 있습니다(Docker Engine, Compose 2.24.4 이상, curl 필요).
 

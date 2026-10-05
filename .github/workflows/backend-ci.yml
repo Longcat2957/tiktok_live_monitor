@@ -1,0 +1,51 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: '0.12.8'
+          python-version: '3.11'
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Check backend
+        working-directory: backend
+        run: |
+          uv sync --locked
+          uv run --no-sync pytest -q
+          uv run --no-sync mypy
+          uv run --no-sync ruff check app tests
+
+      - name: Check shell syntax
+        run: |
+          for script in scripts/*.sh deploy/*.sh; do
+            bash -n "$script"
+          done
+
+      - name: Test update script with local Git repositories
+        run: python3 scripts/test-update.py
+
+      - name: Test desktop autostart repair
+        run: python3 scripts/test-autostart.py

@@ -1,0 +1,76 @@
+name: Frontend CI
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: '0.12.8'
+          python-version: '3.11'
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Prepare mock backend for browser tests
+        working-directory: backend
+        run: uv sync --locked --no-dev
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          package_json_file: frontend/package.json
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.20.0'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Check frontend
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm lint
+          pnpm format:check
+          pnpm check
+          pnpm test
+          pnpm build
+
+      - name: Install browser and Korean fonts
+        working-directory: frontend
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          sudo apt-get install -y fonts-noto-cjk
+
+      - name: Test browser flows with mock data
+        working-directory: frontend
+        run: pnpm test:e2e
+
+      - name: Upload browser report and failure traces
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: browser-results
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

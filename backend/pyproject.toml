@@ -1,6 +1,6 @@
 [project]
 name = "tiktok-live-monitor"
-version = "0.1.0"
+version = "1.0.0"
 description = "Portrait TikTok LIVE comment monitor"
 requires-python = ">=3.11"
 dependencies = ["fastapi", "uvicorn[standard]", "pydantic-settings", "TikTokLive", "httpx"]

@@ -36,7 +36,11 @@ jobs:
           uv sync --locked
           uv run --no-sync pytest -q
           uv run --no-sync mypy
-          uv run --no-sync ruff check app tests
+          uv run --no-sync ruff check app tests stress_pipeline.py
+
+      - name: Check sustained SQLite and WebSocket load
+        working-directory: backend
+        run: uv run --no-sync python stress_pipeline.py --duration 10 --rate 500 --clients 2 --comment-size 1000 --max-p99-ms 1000 --max-latency-ms 5000
 
       - name: Check shell syntax
         run: |

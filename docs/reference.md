@@ -215,7 +215,7 @@ pnpm test:e2e
 
 `pnpm lint`는 JavaScript·TypeScript·Svelte의 ESLint 권장 규칙을 검사합니다. `pnpm format:check`는 Prettier의 공백 4칸 들여쓰기를 포함한 서식을 확인합니다. 자동 수정은 `frontend`에서 `pnpm lint:fix`, 서식 적용은 `pnpm format`으로 실행합니다.
 
-E2E는 정적 빌드가 필요하며 `backend/.venv/bin/python`으로 테스트용 서버를 `127.0.0.1:18765`, 접근성 검사용 `18768`에 실행하고 종료합니다. 테스트가 API 또는 화면에서 데모를 명시적으로 시작합니다. Vite 프록시 검사는 `18766`을 사용합니다. 해당 포트는 비워두세요. 기존 Chromium을 쓰려면 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`를 지정합니다. Linux 브라우저 의존성이 부족하면 Playwright 공식 설치 안내에 따라 `pnpm exec playwright install --with-deps chromium`을 실행합니다.
+E2E는 정적 빌드가 필요하며 `backend/.venv/bin/python`으로 테스트용 서버를 `127.0.0.1:18765`, 접근성 검사용 `18768`, 저장 장애 검사용 `18769`에 실행하고 종료합니다. 테스트가 API 또는 화면에서 데모를 명시적으로 시작합니다. Vite 프록시 검사는 `18766`을 사용합니다. 해당 포트는 비워두세요. 기존 Chromium을 쓰려면 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`를 지정합니다. Linux 브라우저 의존성이 부족하면 Playwright 공식 설치 안내에 따라 `pnpm exec playwright install --with-deps chromium`을 실행합니다.
 
 백엔드 테스트는 health/static route, WebSocket 상태·댓글·disconnect, 큐 drop, 느린 연결 격리, TikTok 이벤트 변환·대기·취소 정리를 확인합니다. 프론트엔드 테스트는 메시지 검증, 10,000개 입력 후 보관 수, 재연결 backoff와 unmount 정리를 확인합니다. E2E는 1080×1920 및 720×1280의 줄바꿈·상태 영역, HTML의 텍스트 표시, 연결 단절 중 댓글 유지, 서버 재시작 후 선택 화면 복귀, 1,000개 burst 수신 순서, 읽기 위치 보존, 요청 시간 초과·결과 확인, 테마·글자 크기 저장을 확인합니다. 390·320px 화면과 키보드 설정창 조작도 검사합니다.
 
@@ -240,6 +240,32 @@ uv run python profile_pipeline.py --slow-client-ms 100 --peer-capacity 4
 
 `--profile`은 CPU 상위 함수와 계측 코드까지 포함한 Python 힙 최고치를 추가합니다. 계측 오버헤드가 있으므로 처리량 비교는 같은 옵션끼리 합니다. 합성 댓글을 `EventSink`와 실제 broadcaster로 전달하며 가짜 WebSocket에서 JSON 직렬화를 수행합니다. 외부 TikTok 연결, Chromium 렌더링, 네트워크 전송 시간은 포함하지 않습니다. 결과는 표준 출력에만 기록되며 고정 처리량 합격선은 없습니다.
 
+### SQLite 장애·복합 부하 검사
+
+SQLite를 포함한 경로는 다음 명령으로 확인합니다. 임시 DB와 localhost 테스트 서버만 사용하며 TikTok 계정이나 운영 DB에 접근하지 않습니다.
+
+```bash
+cd backend
+uv run pytest -q tests/services/test_archive.py tests/services/test_archive_crash.py tests/api/test_network.py
+uv run python stress_pipeline.py --duration 60 --rate 500 --clients 2 --comment-size 1000
+```
+
+SQLite 검사는 실제 `SQLITE_FULL`·`SQLITE_READONLY`·`SQLITE_BUSY`, 큐 포화와 SQL 실패의 결합, 백업 중 추가 commit을 재현합니다. FULL은 SQLite 페이지 상한, READONLY는 연결의 `query_only`, BUSY는 다른 연결의 write lock을 사용합니다. 실패 전 commit 보존, 모든 저장·누락 항목의 합계, 재시작 후 저장과 무결성을 확인합니다. subprocess 검사에서는 미완료 transaction의 페이지가 WAL에 실제로 기록된 뒤 SIGKILL하고, commit된 기록만 복구되는지 확인합니다. 물리적인 전원 차단 검사는 아닙니다.
+
+실제 HTTP/WebSocket 검사에서는 저장 writer를 막고 큐를 초과하는 댓글을 보내며, 느린 peer의 송신도 함께 정지시킵니다. 정상 peer의 전체 수신 순서·HTTP 응답, 느린 연결 격리, 세션 전환 중 DB 귀속과 해제 후 저장을 확인합니다. 연결과 worker가 살아 있지만 댓글이 없는 구간은 주기적인 진단 시각·카운터로 확인하고, 조용한 방송을 임의로 재연결하지 않은 채 다시 댓글을 받을 수 있는지 검사합니다. 이 송신 지연은 테스트에서 제어하며 실제 통신망 packet loss를 만들지는 않습니다.
+
+브라우저까지 포함하는 검사는 정적 빌드 후 `frontend`에서 `pnpm exec playwright test e2e/persistence.spec.ts`로 실행합니다. 테스트 전용 서버에서 저장 지연·큐 초과·쓰기 실패를 제어하고, 실제 EventSink → SQLite 저장 큐 / WebSocket → Svelte DOM을 사용합니다. `/ws`를 가로채지 않으며 CPU 4배 지연 조건에서도 최근 댓글의 전체 ID 순서와 저장 장애 후 화면 전달을 확인합니다. 제어용 경로는 테스트 서버에만 있고 운영 앱에는 추가하지 않습니다.
+
+`stress_pipeline.py`는 실제 SQLite와 TCP WebSocket을 사용해 지정 시간 동안 합성 댓글을 보냅니다. 목표 생성 수의 95% 이상, 생성 수·DB 행 수·각 peer 수신 수와 순서, 무결성, 누락, 큐 최고 깊이, 전달 지연, RSS 증가와 종료 후 남은 task/thread를 검사합니다. 측정 배열은 크기를 제한하고 DB는 행을 순회하여 검증합니다. 지연 percentile은 마지막 10,000개 수신 표본, 최고 지연은 전체 실행을 기준으로 기록합니다. 실패하면 JSON의 `checks`와 함께 종료 코드 1을 반환합니다. `dev` Backend CI는 10초·500건/초·1,000자·연결 2개 조건에 p99 1초·전체 최고 지연 5초의 상한을 적용합니다. 기본 RSS 증가 상한은 warmup 후 32MiB이며 `--max-rss-growth-mb`로 변경할 수 있습니다. 이 수치는 선택한 테스트 기준이며 Pi의 처리량 보장은 아닙니다.
+
+Pi의 SD 저장장치에서 한 시간 이상 확인하려면 같은 runner를 해당 장비에서 실행합니다. `--directory`는 이미 존재하는 디렉터리이며 그 안에 만든 임시 테스트 디렉터리만 종료 후 제거합니다.
+
+```bash
+uv run python stress_pipeline.py --duration 3600 --rate 100 --clients 2 --comment-size 10000 --directory /path/on/sd
+```
+
+운영 이미지의 `scripts/test-container.sh`에는 별도 1MiB tmpfs를 실제로 채워 저장 실패를 확인하는 검사가 포함됩니다. 이 임시 컨테이너는 운영 volume을 mount하지 않습니다. 로컬 검증 시간과 실제 Pi/SD 장시간 검증은 구분해서 기록해야 합니다.
+
 로컬 정적 빌드를 FastAPI에서 확인하려면 `pnpm build` 이후 백엔드를 시작하고 `http://127.0.0.1:8000`을 엽니다. 빌드 폴더를 새로 만든 경우 백엔드를 재시작하세요.
 
 저장소 루트에서 운영 이미지 빌드:
@@ -257,7 +283,7 @@ Node 빌드 단계와 Python 의존성 단계를 분리하며 최종 이미지�
 | Workflow | 자동 실행 | 검사·발행 내용 |
 | --- | --- | --- |
 | [Frontend CI](https://github.com/Longcat2957/tiktok_live_monitor/actions/workflows/frontend-ci.yml) | `dev` 푸시, `dev` 대상 PR | lint, format:check, TypeScript/Svelte check, 단위 테스트, 정적 빌드, mock 브라우저 E2E |
-| [Backend CI](https://github.com/Longcat2957/tiktok_live_monitor/actions/workflows/backend-ci.yml) | `dev` 푸시, `dev` 대상 PR | pytest, mypy, Ruff, 셸 문법, 업데이트·autostart 스크립트 테스트 |
+| [Backend CI](https://github.com/Longcat2957/tiktok_live_monitor/actions/workflows/backend-ci.yml) | `dev` 푸시, `dev` 대상 PR | pytest, mypy, Ruff, SQLite·TCP WebSocket 부하, 셸 문법, 업데이트·autostart 스크립트 테스트 |
 | [Docker CI](https://github.com/Longcat2957/tiktok_live_monitor/actions/workflows/ci.yml) | `main` 푸시, `main` 대상 PR | AMD64/ARM64 이미지 빌드·컨테이너 실행 검증, `main` 푸시에서 Docker Hub 발행 |
 
 Frontend CI와 Backend CI는 독립적으로 실행합니다. 프론트엔드 E2E가 mock 백엔드를 직접 시작하므로 Frontend CI에도 백엔드 런타임 의존성을 설치합니다. `dev`의 두 CI가 모두 성공한 커밋을 `main`으로 반영하세요.

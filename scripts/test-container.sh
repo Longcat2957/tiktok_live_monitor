@@ -237,6 +237,105 @@ print("SQLite creation, shutdown flush, container replacement and external snaps
 PY
 "${compose[@]}" exec --no-TTY app rm -- /data/smoke-backup.sqlite3
 "${compose[@]}" stop --timeout 20 app
+
+# An isolated 1 MiB tmpfs exercises actual ENOSPC without filling the host disk
+# or attaching any project volume. The test subclass only observes error codes.
+docker run --rm --interactive --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --tmpfs /data:rw,size=1m,uid=10001,gid=10001,mode=0700 \
+  --tmpfs /tmp:rw,size=1m,mode=1777 \
+  "$SMOKE_IMAGE" python - <<'PY' 2>"$SMOKE_DIR/disk-full.log"
+import asyncio
+import json
+import sqlite3
+from contextlib import closing
+from pathlib import Path
+from unittest.mock import patch
+
+import httpx
+
+from app.config import Settings
+from app.main import create_app
+from app.schemas.events import Comment, User
+from app.services.archive import Archive
+
+
+class ObservedArchive(Archive):
+    attempted = 0
+    failure_code = None
+
+    def _enqueue(self, record):
+        self.attempted += 1
+        super()._enqueue(record)
+
+    def _fail(self, operation, exc):
+        self.failure_code = getattr(exc, "sqlite_errorcode", None)
+        super()._fail(operation, exc)
+
+
+async def main():
+    path = Path("/data/monitor.sqlite3")
+    assert not path.exists()
+    app = create_app(Settings(_env_file=None, archive_path=path, log_level="WARNING"))
+    with patch("app.services.monitor.Archive", ObservedArchive):
+        async with app.router.lifespan_context(app):
+            monitor = app.state.monitor
+            archive = monitor.archive
+            assert archive.get_health().ready
+            user = User(nickname="Full fixture", unique_id="full")
+
+            def comment(number, text):
+                archive.comment(
+                    Comment(id=f"full-{number}", user=user, comment=text),
+                    monitor.broadcaster.status,
+                )
+
+            for number in range(10):
+                comment(number, "committed prefix")
+            async with asyncio.timeout(5):
+                while archive.get_health().saved_comments != 10:
+                    await asyncio.sleep(0.02)
+            for number in range(10, 210):
+                marker = "PRIVATE_DISK_PAYLOAD"
+                comment(number, marker + "x" * (10_000 - len(marker)))
+            async with asyncio.timeout(5):
+                while archive.get_health().error is None:
+                    await asyncio.sleep(0.02)
+            failed = archive.get_health()
+            assert archive.failure_code == sqlite3.SQLITE_FULL
+            assert failed.error == "write:OperationalError"
+            assert not failed.ready and failed.dropped > 0 and failed.queued == 0
+            comment(210, "PRIVATE_DISK_PAYLOAD after failure")
+            archive.diagnostic("disk_full_fixture_after_failure")
+            assert archive.get_health().dropped == failed.dropped + 2
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://localhost:8000"
+            ) as client:
+                response = await client.get("/health")
+                assert response.status_code == 503
+                assert response.json()["storage"]["error"] == failed.error
+                assert (await client.get("/config")).status_code == 200
+
+    final = archive.get_health()
+    assert final.queued == 0 and archive._executor is None
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as database:
+        assert database.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        rows = database.execute("SELECT id,event_id FROM comments ORDER BY id").fetchall()
+        assert rows == [(number + 1, f"full-{number}") for number in range(10)]
+        assert len(rows) == final.saved_comments
+        assert database.execute("SELECT COUNT(*) FROM diagnostics").fetchone()[0] == final.saved_diagnostics
+    assert final.saved_comments + final.saved_diagnostics + final.dropped == archive.attempted
+    print(json.dumps({"sqlite_errorcode": archive.failure_code, "storage": final.model_dump()}))
+
+
+asyncio.run(main())
+PY
+grep -q 'SQLite archive write failed (OperationalError)' "$SMOKE_DIR/disk-full.log"
+if grep -q 'PRIVATE_DISK_PAYLOAD' "$SMOKE_DIR/disk-full.log"; then
+  echo 'Disk-full diagnostics exposed a comment payload.' >&2
+  exit 1
+fi
+echo 'Bounded tmpfs SQLITE_FULL, committed prefix, degraded health and safe diagnostics passed.'
 if [[ -n "${SMOKE_PUBLISH_TAG:-}" ]]; then
   # Keep the exact tested image for CI publication after the smoke tag is removed.
   docker tag "$SMOKE_IMAGE" "$SMOKE_PUBLISH_TAG"

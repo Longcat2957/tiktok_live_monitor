@@ -20,6 +20,7 @@ from .gift_images import CachedImage, GiftImageCache
 
 logger = logging.getLogger(__name__)
 STOP_TIMEOUT = 12.0
+DIAGNOSTICS_INTERVAL_SECONDS = 30.0
 Action = Literal["start", "stop", "refresh", "settings"]
 
 
@@ -106,7 +107,7 @@ class MonitorService:
 
     async def _record_snapshots(self) -> None:
         while True:
-            await asyncio.sleep(30)
+            await asyncio.sleep(DIAGNOSTICS_INTERVAL_SECONDS)
             self._record_snapshot()
 
     def _status(self, source: SourceName | None = None, username: str | None = None) -> Status:

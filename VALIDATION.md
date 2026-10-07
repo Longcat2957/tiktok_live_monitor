@@ -2,6 +2,17 @@
 
 완료된 백엔드 안정화와 프론트엔드 개선 작업의 검증 기록을 모았다. 아래 결과는 당시 실행 결과이며 현재 커밋에서 재실행한 결과가 아니다. 검사 명령은 [개발 환경 설치 가이드](docs/installation-dev.md#5-검사와-빌드)를 따른다.
 
+## SQLite 장애·복합 부하 검사 (2026-10-07)
+
+- SQLite의 실제 FULL·READONLY·BUSY 오류, 저장 지연·큐 포화와 쓰기 실패의 결합, 백업 중 추가 commit을 검사했다. commit된 데이터 보존·순서·정확한 누락 집계·무결성과 재시작 후 저장을 확인했다. READONLY는 연결의 `query_only`, FULL 단위 검사는 페이지 상한으로 재현한다.
+- 실제 subprocess의 미완료 transaction이 WAL에 페이지를 기록한 뒤 SIGKILL했다. 기존 commit 100개만 남고, 재시작 후 다음 행이 정상 저장됨을 확인했다. 물리적 전원 차단을 대신하는 검사는 아니다.
+- 실제 localhost HTTP/TCP WebSocket에서 저장 writer 정지·큐 초과·느린 peer·세션 전환을 겹쳤다. 정상 peer는 댓글 2,500개와 전환 후 40개를 순서대로 받고, 저장된 prefix의 원래 세션 귀속도 유지했다. 연결 유지 중 댓글 무수신은 실제 주기적 snapshot과 수신 재개를 검사했다.
+- Chromium의 실제 WS→DOM 검사 3개를 추가했다. CPU 4배 지연·댓글 2,600개·저장 큐 초과, backlog 중 계정 변경, 저장 실패와 같은 DB 재시작을 재현했다. 최신 30개 전체 ID, 저장 순서·계정·세션, health 503 이후 화면 전달과 안전한 로그를 확인했다. 테스트 제어 API는 운영 앱에 포함하지 않는다.
+- Backend pytest **95개**, mypy **31개 파일**, Ruff check·format 통과. Frontend lint·format:check·check(오류·경고 0개), 단위 테스트 **45개**, 정적 build, 전체 E2E **34개** 통과했다. runner·snapshot 대기·종료 정리의 최종 수정 후 관련 pytest **5개**와 Ruff도 다시 통과했다.
+- 로컬 Linux x86_64에서 `stress_pipeline.py --duration 60 --rate 500 --clients 2 --comment-size 1000 --max-p99-ms 1000 --max-latency-ms 5000`을 실행했다. 생성·SQLite 저장은 각각 **30,000건**, 두 TCP peer도 각각 **30,000건**을 순서대로 받았다. 누락·느린 연결 종료·복구·남은 task는 0건, 소스/peer/저장 큐 최고치는 **1/1/103**, warmup 후 RSS 증가는 **1,343,488바이트**였다. 마지막 10,000개 수신 표본 p99 **35.755ms**, 전체 최고 지연 **42.631ms**였으며 다른 로컬 검사와 병행한 한 번의 측정이다. CI와 같은 10초 조건도 목표 5,000건 및 모든 검사를 통과했다.
+- x86_64 운영 컨테이너 smoke는 최초 생성·소유권·종료 flush·컨테이너 교체·외부 backup을 통과했다. 별도 1MiB tmpfs에서 실제 `SQLITE_FULL=13`을 확인했고, 기존 댓글 10개 보존·누락 집계·무결성·health 503/API 응답·payload 없는 stderr를 검사했다. 운영 volume이나 호스트 디스크는 채우지 않았다.
+- 한 시간 이상의 실행 방법과 검증 범위는 [SQLite 장애·복합 부하 검사](docs/reference.md#sqlite-장애복합-부하-검사)에 기록했다. 실제 Pi/SD 장시간 운용, TikTok 실방송, 통신망 packet loss와 물리적 전원 차단은 이번 로컬 실행 범위에 포함하지 않는다.
+
 ## Rose 중심의 데모 데이터 정리 (2026-10-05)
 
 - 반복 이모지·장문·긴 URL·스크립트 문자열을 짧은 채팅으로 교체하고 자동 일시정지·종료 구간을 제거했다. 항상 방송 중인 12단계 데모에서 Rose 1개·5개·25개와 팔로우·공유·구독을 반복한다. 프로필·배지와 재연결 후 댓글 생성 순번은 유지한다.

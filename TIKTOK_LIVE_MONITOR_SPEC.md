@@ -670,3 +670,6 @@ MVP 검증 이후에만 다음을 고려한다.
 - `python -m app.services.archive DESTINATION`은 readonly source 연결과 SQLite backup API로 외부 반출용 snapshot을 만든다. 기존 destination은 덮어쓰지 않는다. 실행 중 DB 파일을 단독 복사하지 않는다.
 - 시간·하루 조회는 한국 시간의 시작/종료를 timezone-aware UTC로 바꾼 `[시작, 종료)` 조건으로 조회하고 `comments.id`로 수신 순서를 정렬한다. DB를 시간/하루 단위로 회전하지 않으며 자동 보관 기한 삭제도 추가하지 않는다.
 - 컨테이너 smoke는 빈 볼륨 최초 생성과 10001 소유권, mock 댓글·진단 저장, 종료 flush, force-recreate 후 보존, 외부 backup DB를 검사한다. 고유 smoke 프로젝트의 volume만 테스트 정리 시 삭제하고 운영 volume은 삭제하지 않는다. 실제 Pi 검증 여부는 별도로 보고한다.
+- 장애·부하 검사는 SQLite FULL/READONLY/BUSY, 저장 큐 포화와 쓰기 실패의 결합, 지속 쓰기 중 백업, 미완료 WAL transaction의 SIGKILL 복구를 포함한다. 별도 tmpfs의 실제 용량 고갈도 컨테이너 검사에서 재현하되 운영 volume과 호스트 디스크를 채우지 않는다.
+- 실제 HTTP/WebSocket 및 브라우저 검사는 저장 지연·댓글 폭주·느린 송신·세션 전환이 겹칠 때 정상 전달과 저장 귀속을 확인한다. 댓글이 없는 연결 유지 구간은 진단 snapshot과 재개를 검사하며 무수신만으로 재연결하는 동작을 추가하지 않는다. 제어 경로는 테스트용 서버에만 둔다.
+- 장시간 검사 runner는 SQLite와 실제 TCP WebSocket을 포함하며 생성·저장·전달 수와 순서, bounded queue, 무결성, 전달 지연·RSS와 종료 정리를 검사한다. CI의 짧은 검사는 Pi 실장비의 시간 단위 운용이나 물리적 전원 차단을 대신하지 않는다.

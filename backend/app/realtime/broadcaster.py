@@ -30,7 +30,7 @@ def enqueue_event(queue: asyncio.Queue[FeedEvent], event: FeedEvent) -> bool:
 
 @dataclass
 class Peer:
-    queue: asyncio.Queue[Message]
+    queue: asyncio.Queue[tuple[Message, str]]
     task: asyncio.Task[None]
     id: str
 
@@ -85,8 +85,8 @@ class WebSocketBroadcaster:
         self.accepting += 1
         try:
             await socket.accept()
-            queue: asyncio.Queue[Message] = asyncio.Queue(self.capacity)
-            queue.put_nowait(self.status)
+            queue: asyncio.Queue[tuple[Message, str]] = asyncio.Queue(self.capacity)
+            queue.put_nowait((self.status, self.status.model_dump_json()))
             peer_id = str(uuid4())
             task = asyncio.create_task(self._send(socket, queue, peer_id))
             self.tasks.add(task)
@@ -99,17 +99,19 @@ class WebSocketBroadcaster:
         await asyncio.sleep(0)
         return socket in self.clients
 
-    async def _send(self, socket: WebSocket, queue: asyncio.Queue[Message], peer_id: str) -> None:
+    async def _send(
+        self, socket: WebSocket, queue: asyncio.Queue[tuple[Message, str]], peer_id: str
+    ) -> None:
         context = self.status
         close_reason = "cancelled"
         try:
             while True:
-                message = await queue.get()
+                message, serialized = await queue.get()
                 # Preserve the session of an in-flight send across a later session boundary.
                 context = message if isinstance(message, Status) else self.status
                 try:
                     async with asyncio.timeout(self.send_timeout):
-                        await socket.send_json(message.model_dump(mode="json"))
+                        await socket.send_text(serialized)
                     if isinstance(message, Comment):
                         self.sent_comments += 1
                         self.last_comment_sent_at = datetime.now(UTC).isoformat()
@@ -172,6 +174,9 @@ class WebSocketBroadcaster:
                     )
                 }
             )
+        if not self.clients:
+            return
+        payload = (message, message.model_dump_json())
         for socket, peer in list(self.clients.items()):
             if peer.queue.full():
                 self.slow_disconnects += 1
@@ -184,7 +189,7 @@ class WebSocketBroadcaster:
                 self.clients.pop(socket, None)
                 peer.task.cancel()
             else:
-                peer.queue.put_nowait(message)
+                peer.queue.put_nowait(payload)
 
     def begin_session(self, status: Status) -> None:
         self.status = status

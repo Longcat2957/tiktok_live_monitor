@@ -12,7 +12,7 @@ import pstats
 import tracemalloc
 from pathlib import Path
 from time import perf_counter, perf_counter_ns, process_time
-from typing import Any, cast
+from typing import cast
 
 from fastapi import WebSocket
 
@@ -35,10 +35,11 @@ class ProfilingSocket:
     async def accept(self) -> None:
         pass
 
-    async def send_json(self, value: dict[str, Any]) -> None:
+    async def send_text(self, text: str) -> None:
         if self.delay_ms:
             await asyncio.sleep(self.delay_ms / 1000)
-        self.serialized_chars += len(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+        self.serialized_chars += len(text)
+        value = json.loads(text)
         if value["type"] == "comment":
             sequence = int(value["id"])
             self.latencies.append(perf_counter_ns() - self.sent_at[sequence])

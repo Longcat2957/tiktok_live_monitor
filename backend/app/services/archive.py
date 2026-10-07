@@ -221,9 +221,14 @@ class Archive:
             deadline = loop.time() + FLUSH_SECONDS
             stopping = False
             while len(batch) < BATCH_SIZE:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
                 try:
-                    record = await asyncio.wait_for(
-                        self._queue.get(), timeout=max(0, deadline - loop.time())
+                    record = (
+                        self._queue.get_nowait()
+                        if not self._queue.empty()
+                        else await asyncio.wait_for(self._queue.get(), timeout=remaining)
                     )
                 except TimeoutError:
                     break

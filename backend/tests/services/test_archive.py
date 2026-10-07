@@ -107,6 +107,46 @@ async def test_timer_flush_and_live_wal_backup(tmp_path: Path) -> None:
         await archive.close()
 
 
+@pytest.mark.parametrize("expired_deadline", [False, True])
+async def test_ready_queue_batches_without_waiting_and_respects_deadline(
+    tmp_path: Path, monkeypatch, expired_deadline: bool
+) -> None:
+    path = tmp_path / "monitor.sqlite3"
+    archive = Archive(path)
+    await archive.start()
+    original_get, original_write = archive._queue.get, archive._write
+    gets = 0
+    batch_sizes = []
+
+    async def counted_get():
+        nonlocal gets
+        gets += 1
+        return await original_get()
+
+    def measured_write(batch):
+        batch_sizes.append(len(batch))
+        return original_write(batch)
+
+    monkeypatch.setattr(archive._queue, "get", counted_get)
+    monkeypatch.setattr(archive, "_write", measured_write)
+    if expired_deadline:
+        monkeypatch.setattr("app.services.archive.FLUSH_SECONDS", 0)
+    total = BATCH_SIZE + 7
+    try:
+        for number in range(total):
+            archive.comment(comment(number), status())
+        assert archive._queue.qsize() == total  # Writer starts with an already populated queue.
+    finally:
+        await asyncio.wait_for(archive.close(), timeout=3)
+    assert batch_sizes == ([1] * total if expired_deadline else [BATCH_SIZE, 7])
+    assert gets == (total + 1 if expired_deadline else 2)
+    assert rows(path) == [(f"event-{number}", f"댓글 {number}") for number in range(total)]
+    health = archive.get_health()
+    assert health.saved_comments == total and health.saved_diagnostics == 0
+    assert health.queued == health.dropped == 0 and health.error is None
+    assert archive._task is not None and archive._task.done() and archive._executor is None
+
+
 async def test_bounded_queue_never_waits_for_slow_disk(tmp_path: Path, monkeypatch) -> None:
     archive = Archive(tmp_path / "monitor.sqlite3")
     await archive.start()

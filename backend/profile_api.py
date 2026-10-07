@@ -233,6 +233,8 @@ def process_sample(pid: int) -> tuple[float, int]:
 
 
 async def run_load(args) -> dict:
+    changing_sessions = args.mode in {"mixed", "mixed-churn"}
+    churning_peers = args.mode in {"churn", "mixed-churn"}
     metrics: dict[str, Metric] = {}
     handshake = Metric()
     health_failures: Counter = Counter()
@@ -345,7 +347,7 @@ async def run_load(args) -> dict:
                             ("DELETE", "/account"),
                             ("POST", "/account"),
                         ]
-                        paths = read + (mixed if args.mode == "mixed" else [])
+                        paths = read + (mixed if changing_sessions else [])
                         iteration = index
                         while not stop.is_set():
                             method, path = paths[iteration % len(paths)]
@@ -469,7 +471,7 @@ async def run_load(args) -> dict:
                         workers = [
                             asyncio.create_task(request_worker(i)) for i in range(args.concurrency)
                         ]
-                        if args.mode == "churn":
+                        if churning_peers:
                             workers += [
                                 asyncio.create_task(reconnect_worker(i))
                                 for i in range(args.reconnectors)
@@ -485,7 +487,7 @@ async def run_load(args) -> dict:
                         driver_cpu_after = time.process_time()
                         if driver_profile:
                             driver_profile.disable()
-                        if args.mode != "mixed":
+                        if not changing_sessions:
                             async with asyncio.timeout(10):
                                 while not (temporary_path / "source-finished.json").exists():
                                     await asyncio.sleep(0.01)
@@ -528,16 +530,16 @@ async def run_load(args) -> dict:
             checks = {
                 "http": bool(reports) and all(not metric.errors for metric in metrics.values()),
                 "handshakes": not handshake.errors
-                and (args.mode != "churn" or handshake.statuses[101] > 0),
+                and (not churning_peers or handshake.statuses[101] > 0),
                 "websocket_receivers": not receiver_errors,
                 "websocket_order": all(
                     peer["in_order"] and peer["gaps"] == 0 for peer in peer_stats
                 ),
-                "websocket_delivery": args.mode == "mixed"
+                "websocket_delivery": changing_sessions
                 or all(peer["received"] == server_result["generated"] for peer in peer_stats),
                 "source_active": server_result["generated"] > 0
                 and all(peer["received"] > 0 for peer in peer_stats),
-                "source_rate": args.mode == "mixed"
+                "source_rate": changing_sessions
                 or server_result["generated"] >= args.duration * args.comment_rate * 0.95,
                 "archive": server_result["integrity"] == "ok"
                 and server_result["sqlite_order"]
@@ -598,7 +600,7 @@ async def run_load(args) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("read", "mixed", "churn"), default="read")
+    parser.add_argument("--mode", choices=("read", "mixed", "churn", "mixed-churn"), default="read")
     parser.add_argument("--duration", type=float, default=10)
     parser.add_argument("--concurrency", type=int, default=16)
     parser.add_argument("--clients", type=int, default=2)

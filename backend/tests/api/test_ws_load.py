@@ -143,6 +143,17 @@ async def test_real_ws_reconnect_and_abrupt_close_waves_do_not_leak_or_interrupt
                     open_wave(endpoint, base, 32, opened),
                     probe_health(client, manager.max_clients),
                 )
+                if not peers:
+                    # Closing senders still occupy slots, so the overlapping wave may
+                    # all be denied. Prove readmission once those slots are released.
+                    await eventually(
+                        lambda: (
+                            len(manager.clients) == len(manager.tasks) == 1
+                            and manager.accepting == 0
+                        )
+                    )
+                    peers = await open_wave(endpoint, base, 32, opened)
+                    assert len(peers) == 15
                 assert 0 < len(peers) <= 15
                 await producer
                 await eventually(

@@ -36,7 +36,7 @@ jobs:
           uv sync --locked
           uv run --no-sync pytest -q
           uv run --no-sync mypy
-          uv run --no-sync ruff check app tests stress_pipeline.py profile_api.py
+          uv run --no-sync ruff check app tests stress_pipeline.py profile_pipeline.py profile_api.py
 
       - name: Check sustained SQLite and WebSocket load
         working-directory: backend
@@ -44,7 +44,9 @@ jobs:
 
       - name: Check isolated HTTP and WebSocket load
         working-directory: backend
-        run: uv run --no-sync python profile_api.py --mode read --duration 4 --concurrency 4 --comment-rate 100 --max-http-p99-ms 1000
+        run: |
+          uv run --no-sync python profile_api.py --mode read --duration 4 --concurrency 4 --comment-rate 100 --max-http-p99-ms 1000
+          uv run --no-sync python profile_api.py --mode mixed-churn --duration 4 --concurrency 4 --clients 2 --reconnectors 4 --comment-rate 100 --max-http-p99-ms 1000
 
       - name: Check shell syntax
         run: |

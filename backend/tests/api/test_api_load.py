@@ -243,3 +243,108 @@ async def test_disconnected_http_client_does_not_cancel_an_accepted_transition(a
             monitor.lock.release()
         request.cancel()
         await asyncio.gather(request, return_exceptions=True)
+
+
+@pytest.mark.parametrize("guard", ["fault", "storage_error", "storage_not_ready", "closed"])
+async def test_health_stays_available_between_workers_but_transition_preserves_error_guards(
+    api_server, monkeypatch, guard
+):
+    monitor, client, _ = api_server
+    initial = (await client.get("/health")).json()
+    sid = initial["source"]["session_id"]
+    old_supervisor = monitor.supervisor_task
+    assert old_supervisor is not None and not old_supervisor.done()
+    entered, release = asyncio.Event(), asyncio.Event()
+    original_stop = monitor._stop_session
+
+    async def stopped_workers():
+        result = await original_stop()
+        assert result and old_supervisor.done()
+        entered.set()
+        await asyncio.wait_for(release.wait(), 5)
+        return result
+
+    monkeypatch.setattr(monitor, "_stop_session", stopped_workers)
+    request = asyncio.create_task(client.post("/refresh", json={"session_id": sid}))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        assert monitor.supervisor_task is None and monitor._transitioning
+        assert not request.done()
+        health, config = await asyncio.gather(client.get("/health"), client.get("/config"))
+        assert health.status_code == config.status_code == 200
+        body = health.json()
+        assert body["source"]["state"] == "connected"
+        assert body["source"]["session_id"] == config.json()["session_id"] == sid
+        assert body["pending_commands"] == 1 and body["fault"] is None
+        assert body["storage"]["ready"] and body["storage"]["error"] is None
+
+        with monkeypatch.context() as injected:
+            if guard == "fault":
+                injected.setattr(monitor, "fault", "shutdown_timeout")
+            elif guard == "storage_error":
+                injected.setattr(monitor.archive, "_error", "write:OperationalError")
+            elif guard == "storage_not_ready":
+                injected.setattr(monitor.archive, "_ready", False)
+            else:
+                injected.setattr(monitor, "closed", True)
+            unavailable = await client.get("/health")
+            assert unavailable.status_code == 503
+            assert unavailable.json()["status"] == "error"
+            assert monitor._transitioning and not request.done()
+        assert (await client.get("/health")).status_code == 200
+        release.set()
+        refreshed = await asyncio.wait_for(request, 5)
+        assert refreshed.status_code == 200 and refreshed.json()["session_id"] != sid
+        await wait_until(lambda: not monitor.commands)
+        assert not monitor._transitioning
+        assert monitor.supervisor_task is not None and not monitor.supervisor_task.done()
+        assert (await client.get("/health")).status_code == 200
+    finally:
+        release.set()
+        await asyncio.wait_for(asyncio.gather(request, return_exceptions=True), 5)
+
+
+async def test_cancelled_transition_clears_flag_and_exposes_unexpected_worker_absence(
+    api_server, monkeypatch
+):
+    monitor, client, _ = api_server
+    sid = (await client.get("/config")).json()["session_id"]
+    entered, release = asyncio.Event(), asyncio.Event()
+    old_supervisor = monitor.supervisor_task
+    original_stop = monitor._stop_session
+
+    async def stopped_workers():
+        result = await original_stop()
+        assert result and old_supervisor is not None and old_supervisor.done()
+        entered.set()
+        await asyncio.wait_for(release.wait(), 5)
+        return result
+
+    monkeypatch.setattr(monitor, "_stop_session", stopped_workers)
+    changing = asyncio.create_task(monitor.refresh(sid))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        assert monitor._transitioning and monitor.supervisor_task is None
+        assert (await client.get("/health")).status_code == 200
+        command = next(iter(monitor.commands))
+        command.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(changing, 5)
+        await wait_until(lambda: not monitor.commands)
+        assert not monitor._transitioning
+        health = await client.get("/health")
+        assert health.status_code == 503
+        body = health.json()
+        assert body["source"]["session_id"] == sid and body["source"]["state"] == "connected"
+        assert body["pending_commands"] == 0 and body["fault"] is None
+        assert body["storage"]["ready"] and body["storage"]["error"] is None
+        # Worker absence is now unexpected, so it must remain unhealthy until recovery.
+        release.set()
+        stopped = await client.request("DELETE", "/account", json={"session_id": sid})
+        assert stopped.status_code == 200 and stopped.json()["state"] == "idle"
+        assert not monitor._transitioning
+        assert (await client.get("/health")).status_code == 200
+    finally:
+        release.set()
+        changing.cancel()
+        await asyncio.gather(changing, return_exceptions=True)

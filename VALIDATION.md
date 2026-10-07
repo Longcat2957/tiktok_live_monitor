@@ -2,7 +2,71 @@
 
 완료된 백엔드 안정화와 프론트엔드 개선 작업의 검증 기록을 모았다. 아래 결과는 당시 실행 결과이며 현재 커밋에서 재실행한 결과가 아니다. 검사 명령은 [개발 환경 설치 가이드](docs/installation-dev.md#5-검사와-빌드)를 따른다.
 
+## API/WS 병목 수정 적용과 TCP 전후 비교 (2026-10-07)
+
+다음 네 가지를 현재 소스에 적용했다. 아래 이전 조사에서 후보로 남겼던 SQLite 배치 수집과 전환 중 health 판정도 이번에 반영했다.
+
+- 공통 `get_monitor` 의존성을 `async def`로 바꿨다. 이 함수는 `app.state.monitor`를 읽기만 하는데, 동기 함수였을 때 FastAPI가 요청마다 AnyIO worker를 빌렸다. 기본 worker 토큰 두 개를 모두 실제 대기 작업으로 점유한 TCP 회귀 검사에서 이전 `fcd4885`는 health/config/WS handshake가 3초 상한에 걸려 실패했다(`before-threadpool-test.log`). 수정 후에는 두 토큰을 계속 점유한 상태에서 세 요청이 모두 완료됐다. 이 검사는 thread pool 대기 제거를 확인하며 3초를 응답 성능 목표로 쓰지 않는다.
+- WebSocket은 선물 이미지 주소를 캐시 경로로 바꾼 뒤 `model_dump_json()`을 한 번 호출하고, 같은 문자열을 각 peer에 `send_text()`로 보낸다. bounded queue의 `(Message, 문자열)`은 기존 댓글 집계와 전송 중 세션 진단을 유지한다. 두 peer 회귀 검사에서 broadcast당 인코딩 한 번, 동일 JSON·순서·Unicode 평문·전송 집계를 확인했다.
+- SQLite는 이미 쌓인 항목을 `get_nowait()`로 배치에 넣고, 큐가 비었을 때만 `wait_for(queue.get())`로 기다린다. 매 항목 전 기존 deadline을 검사하며 최대 100개·1초, FIFO·종료 flush·오류와 누락 집계를 유지한다. 미리 쌓인 107개는 async get 두 번으로 `[100, 7]` 배치가 되고, 만료된 deadline은 ready queue에서도 한 개씩 flush하는 회귀 검사를 통과했다.
+- 정상 세션 전환을 `_transitioning`으로 표시해 이전 worker가 종료되고 다음 worker가 생기기 전의 health 503을 없앴다. 실제 `fault`, 저장 오류·저장 not-ready, 종료 상태는 전환 중에도 503이며, 취소된 전환은 flag를 해제하고 예상하지 못한 worker 부재를 드러내는 검사를 통과했다.
+
+`backend/profile_api.py`의 실제 localhost HTTP/TCP WS로 이전 `fcd4885` worktree와 수정된 현재 소스를 같은 Python 환경에서 순차 실행했다. 서버와 부하 생성기는 별도 프로세스이고 Linux x86_64·NVMe/Btrfs의 프로젝트 디렉터리에 임시 DB를 만들었다. Uvicorn auto/uvloop·WS sans-io·1,024바이트 입력 상한, WS 프록시 없음, worker별 HTTP 연결 풀 조건이다. 아래는 profiler를 끈 8초·댓글 1,000자 실험 한 회차씩이며, 재접속 종료 시간 때문에 측정 창은 약 8.0~9.1초다. 각 칸은 **전 → 후**, CPU는 전체 서버/생성기 프로세스의 1코어 기준 사용률이다.
+
+- `mixed`: HTTP worker 64개·기존 WS peer 2개·세션별 목표 댓글 500건/초. health/config/캐시 이미지 읽기와 account/refresh/config 변경을 섞었다.
+- `fanout`: 읽기 HTTP worker 4개·기존 WS peer 16개·목표 댓글 1,500건/초.
+- `churn`: 읽기 HTTP worker 4개·기존 WS peer 2개·재접속 worker 32개·목표 댓글 500건/초. 정상 close와 TCP abort를 번갈아 실행했다.
+- `combined`: mixed HTTP worker 64개·기존 WS peer 8개·재접속 worker 32개·세션별 목표 댓글 500건/초.
+
+| 조건 | HTTP RPS | 서버 CPU(%) | 생성기 CPU(%) | HTTP endpoint별 최고 p99(ms) | health 503 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| mixed | 1,228.59 → 1,401.65 | 63.97 → 55.11 | 73.11 → 85.35 | 95.661 → 103.717 | 1 → 0 |
+| fanout | 561.94 → 720.76 | 96.16 → 78.04 | 78.01 → 86.26 | 10.874 → 11.054 | 0 → 0 |
+| churn | 339.69 → 476.49 | 97.29 → 89.22 | 61.08 → 75.58 | 25.981 → 26.590 | 0 → 0 |
+| combined | 922.65 → 1,079.17 | 74.27 → 61.27 | 70.26 → 78.79 | 135.563 → 110.459 | 2 → 0 |
+
+| 조건 | 생성 댓글 | SQLite 저장 댓글 | 댓글 저장 누락 | 댓글+진단 저장 누락 | 저장 큐 최고 표본 | WS 수신 p99(ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| mixed | 2,533 → 2,427 | 2,533 → 2,427 | 0 → 0 | 0 → 0 | 112 → 107 | 23.621 → 25.455 |
+| fanout | 12,000 → 11,999 | 12,000 → 11,999 | 0 → 0 | 0 → 0 | 186 → 113 | 2.828 → 3.064 |
+| churn | 4,000 → 4,000 | 1,460 → 4,000 | 2,540 → 0 | 10,724 → 0 | 2,100 → 146 | 15.240 → 18.189 |
+| combined | 2,376 → 2,824 | 2,376 → 2,824 | 0 → 0 | 0 → 0 | 172 → 112 | 24.761 → 37.150 |
+
+수정 후 네 조건 모두 runner 검사를 통과했고, 순서·DB 무결성·정상 종료를 유지했다. 소스 큐 누락과 느린 peer 종료는 전후 모두 0이었다. churn의 기존 두 peer는 전후 모두 각각 4,000개를 받았지만, 이전에는 연결 진단이 같은 저장 FIFO를 채워 댓글·진단이 누락됐다. fanout의 16개 peer도 각각 생성된 댓글 전체를 받았다. mixed/combined에서는 세션 경계가 이전 세션의 대기 화면 이벤트를 폐기하므로 전체 WS 수신 수를 생성 수와 같다고 요구하지 않는다. 모든 수락 댓글의 SQLite 저장은 정확히 요구한다. 목표 rate도 세션 재시작마다 다시 시작하므로 이 두 조건의 생성 수를 단일 지속 소스의 500건/초 성능으로 해석하지 않는다.
+
+이 짧은 전후 비교에서 HTTP 처리량과 서버 CPU는 개선됐지만 **WS p99는 네 조건 모두 증가했다**. 수정 후 생성기 CPU와 일부 조건의 실제 처리량도 높아져 부하가 달라졌다. 네 수정을 함께 비교한 결과이며 개별 수정의 기여도나 최대 서버 용량, Pi 성능을 분리해 증명하지 않는다. HTTP는 closed-loop 동시 요청이고 p99는 마지막 10,000개 표본이며, 저장 큐 최고치는 health 요청으로 관측한 표본이다. 명령 16개·WS sender/handshake 16개 상한은 별도 admission 회귀 검사로 검증한다.
+
+별도 `--profile` 비교에서 fanout 이전 서버는 4,796개 댓글에 JSON `iterencode` 76,837회·Pydantic `to_python` 77,122회였다. WS peer 16개마다 JSON 변환이 반복됐던 비용이다. 이후 6,031개 댓글 프로파일에서는 두 함수가 self CPU 상위 20개에서 빠졌고 `_send` 호출은 76,832 → 96,592회였다. mixed의 이전 `run_sync_in_worker_thread`는 10,116회, combined는 11,976회였으며 수정 후 상위 20개에서 빠졌다. 상위 20개만 저장하므로 빠진 함수의 호출 수가 0이라는 뜻은 아니다. async 함수의 호출 수에는 coroutine 재개가 포함된다. 인코딩 횟수 보장은 앞의 직접 회귀 검사를 근거로 삼는다.
+
+프로파일의 메인 timer는 서버 메인 스레드 `thread_time`이고 준비 완료부터 종료까지이며, CPU 사용률의 짧은 요청 창과 다르다. SQLite writer는 실제 단일 writer 스레드의 wall/CPU를 따로 기록한다. profiler를 켠 fanout은 전후 모두 목표 rate 검사가 실패했고, 이전에는 저장 누락도 1,252개였다. 이후에는 저장 누락이 없었지만 profiler 조건의 생성·RPS는 운영 처리량으로 쓰지 않는다. JSON 원본과 이전 실패 로그는 `/tmp/tiktok-api-ws-improvement/`의 `before-*`·`after-*`에 있다.
+
+combined의 별도 프로파일도 전후 검사를 통과했다. 생성·저장 댓글은 2,196 → 2,553개, 저장 누락은 0 → 0개, 저장 큐 최고 표본은 237 → 141개였다. 서버 메인 self CPU 합계는 7.150434 → 6.613127초, `solve_dependencies` 호출은 14,970 → 6,376회였다. 이전 JSON `iterencode` 30,636회·`to_python` 28,349회가 이후 상위 20개에서 빠지고, WS frame/deflate가 주요 비용으로 남았다. HTTP RPS 212.33 → 236.45, 최고 HTTP p99 425.358 → 469.668ms·WS p99 117.394 → 108.634ms는 profiler가 켜진 결과이므로 위 일반 실행의 성능 수치와 섞지 않는다. writer batch는 38 → 40개, 쓰기 wall 합계는 0.514809 → 0.969804초·thread CPU는 0.049298 → 0.071930초였다. 더 많은 저장 작업과 I/O·GIL·스케줄링 대기를 포함하므로 writer가 빨라졌다는 주장도 하지 않는다.
+
+**60초 복합 실행:** 수정 후 `--mode mixed-churn --duration 60 --concurrency 64 --clients 8 --reconnectors 32 --comment-rate 500 --comment-size 1000`으로 실제 TCP 검사를 이어 실행했다. DB 위치·런타임은 위와 같고 profiler를 껐다. 요청·재접속 종료를 포함한 측정 창은 **61.001초**, HTTP 총 **76,534건·1,254.64 RPS**, 서버 CPU **62.43%**·생성기 **84.55%**였다.
+
+| endpoint | 전체 요청 | 200 | 409 | 503 | 수신 p99(ms) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| GET /health | 10,923 | 10,923 | 0 | 0 | 74.777 |
+| GET /config | 10,930 | 10,930 | 0 | 0 | 70.722 |
+| GET /gift-images/{key} | 10,939 | 10,939 | 0 | 0 | 70.733 |
+| POST /refresh | 10,940 | 157 | 9,177 | 1,606 | 100.439 |
+| PATCH /config | 10,939 | 333 | 7,083 | 3,523 | 100.037 |
+| DELETE /account | 10,934 | 292 | 6,818 | 3,824 | 95.089 |
+| POST /account | 10,929 | 234 | 7,017 | 3,678 | 95.439 |
+
+모든 HTTP transport 오류와 예상하지 못한 상태는 0건이었다. 변경 요청은 성공 1,016건, 이전 세션 충돌 30,095건, 상한에 따른 503 거부 12,631건을 구분한다. 따라서 총 RPS를 성공한 변경 작업의 처리량으로 쓰지 않는다. 캐시 이미지 읽기는 외부 CDN 다운로드를 포함하지 않는다. WS handshake는 101 **4,965건**·연결 상한의 HTTP 403 **3,754건**이며 예상하지 못한 handshake/receiver 오류는 없었다.
+
+수락 댓글 **16,669개**와 진단 **16,636개**가 모두 SQLite에 저장됐다. 댓글 ID 순서·연속성·`integrity_check=ok`, 댓글/진단 누락 0개·저장 오류 없음·종료 후 queue 0개를 확인했다. 기존 peer 8개는 이번 실행에서 각각 **16,669개**를 받았고 모두 순서 정상·gap 0개였다. WS p50/p95/p99는 **9.798/21.676/32.027ms**였다. 취소된 세션의 늦은 이벤트 481개는 수락 전에 거부한 별도 집계이며 저장 누락에 포함하지 않는다.
+
+진단에는 snapshot 561개·session_changed 851개·source_state 559개, websocket_connected/disconnected 각각 4,973개·peer_limit 3,754개·send_failed 963개, process_started/stopped 각각 1개가 남았다. 강제 TCP abort에서 발생하는 전송 실패도 기록하면서 소스 큐 누락·느린 peer 종료·worker 복구·fault는 모두 0이었다. health 표본의 pending 명령/WS 연결 최고치는 각각 16개, 저장 대기는 123개, 서버 RSS 최고치는 80,322,560바이트였다. 이 최대 RSS 한 값으로 장시간 메모리 누수 여부를 증명하지 않는다. 모든 runner 검사·정상 서버 종료·임시 디렉터리 삭제를 통과했다.
+
+Backend pytest **118개**, mypy **31개 파일**, Ruff check·format 검사를 통과했다. Frontend lint·format:check·check(오류·경고 0개), 단위 테스트 **45개**, 정적 build와 전체 Chromium E2E **34개**도 통과했다. E2E는 별도 임시 archive를 사용했고 저장 writer 정지·큐 초과·저장 실패 중 실제 HTTP/WS 화면 전달 검사도 포함한다. WS 재접속 회귀 검사는 종료 중인 sender가 상한을 차지해 겹친 연결을 모두 거부하는 경우를 허용하되, sender 정리 확인 후 15개 재접속 성공을 명시적으로 요구하도록 보완했다. 이 보완 후 전체 pytest를 재실행했다.
+
+CI와 같은 `stress_pipeline.py` 10초·500건/초·peer 2개·1,000자 검사도 생성/저장/peer별 수신 **5,000개**, 순서·누락·정리 검사를 통과했다. `profile_api.py`의 4초·HTTP 4개·100건/초 `read`와 HTTP 4개·기존 peer 2개·재접속 4개 `mixed-churn` smoke도 모든 검사를 통과했다. 복합 모드 CLI 회귀 검사와 CI 실행을 추가했다. 실제 Pi/SD·TikTok 실방송·전원 차단은 이 로컬 비교와 60초 실행의 검증 범위에 포함하지 않는다.
+
 ## HTTP/WS 용량과 저장 큐 비교 (2026-10-07)
+
+> 이전 조사 기록이다. 이 절의 “현재 코드”와 “미적용 후보”는 당시 `fcd4885` 상태를 뜻하며, SQLite fast path와 전환 중 health 수정은 위의 적용·전후 비교 절에서 완료했다. 기존 수치는 당시 증거로 유지한다.
 
 `backend/profile_api.py`로 서버와 부하 생성기를 별도 프로세스에서 실행했다. 로컬 Linux x86_64, 운영과 같은 Uvicorn auto/uvloop·WS sans-io·입력 상한 1,024바이트, 8초·목표 댓글 500건/초·1,000자·기존 TCP WS peer 2개 조건이다. HTTP는 `/health`, `/config`, 미리 캐시한 약 16KiB 오프라인 GIF를 순환 요청했다. worker마다 HTTP 연결 풀을 분리했고, 최종 재접속 비교에는 `proxy=None`을 지정해 환경 프록시 탐색 비용을 제거했다. 모든 표의 SQLite DB는 `--directory`로 지정한 NVMe/Btrfs의 프로젝트 디렉터리에 임시로 만들었다.
 
@@ -40,6 +104,8 @@
 Backend pytest **108개**, mypy **31개 파일**, Ruff check·format 검사를 통과했다. Frontend lint·format:check·check(오류·경고 0개), 단위 테스트 **45개**, 정적 build도 통과했다. UI 변경이 없어 E2E는 재실행하지 않았으며 직전 전체 **34개** 통과 기록을 유지한다. 실제 Pi/SD 저장장치와 TikTok 실방송은 이번 측정 범위에 포함하지 않았다.
 
 ## 프로파일링으로 확인한 병목 (2026-10-07)
+
+> 이전 병목 조사 기록이다. 아래 SQLite 후보의 “운영 코드 미적용”은 당시 상태이며 지금은 위 절의 수정과 회귀 검사에 반영했다. 브라우저 분석 등 나머지 측정 범위와 과거 수치는 유지한다.
 
 장애 검사의 통과 여부와 병목 원인 분석을 구분해 추가 측정했다. 앱 성능 코드는 수정하지 않았고, `stress_pipeline.py --profile`에 메인 스레드 CPU와 실제 SQLite writer의 wall/CPU 프로파일을 추가했다. profiler를 끈 비교 실험은 순서대로 실행해 다른 브라우저 부하와 겹치지 않았다.
 

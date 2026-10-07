@@ -70,6 +70,7 @@ class MonitorService:
         self.lock = asyncio.Lock()
         self.commands: set[asyncio.Task[Status]] = set()
         self.stuck: set[asyncio.Task[None]] = set()
+        self._transitioning = False
         self.closed = False
         self.fault: str | None = None
         self.recoveries = 0
@@ -134,7 +135,12 @@ class MonitorService:
             and self.fault is None
             and storage.ready
             and storage.error is None
-            and (not active or self.supervisor_task is not None and not self.supervisor_task.done())
+            and (
+                not active
+                or self._transitioning
+                or self.supervisor_task is not None
+                and not self.supervisor_task.done()
+            )
         )
 
     def _make_stream(self, sink: EventSink) -> EventStream:
@@ -249,26 +255,33 @@ class MonitorService:
                     raise InvalidSettingsError("설정값의 허용 범위를 확인해주세요.") from None
                 if updated == current_settings:
                     return current
-            if not await self._stop_session():
-                raise UnavailableError("이전 연결을 종료하지 못했습니다. 서버를 재시작해주세요.")
-            if self.closed:
-                raise UnavailableError("서버가 종료 중입니다.")
-            self.config = self.config.model_copy(update=updated.model_dump())
-            logging.getLogger("app").setLevel(self.config.log_level)
-            self.queue = asyncio.Queue(self.config.comment_queue_size)
-            self.fault = None
-            self.broadcaster.begin_session(self._status(source, username))
-            self.archive.diagnostic(
-                "session_changed", self.broadcaster.status, details={"action": action}
-            )
-            if source is not None:
-                self.supervisor_task = asyncio.create_task(
-                    self._supervise(), name="monitor-supervisor"
+            # Cancelling a healthy source is expected during a validated session change.
+            self._transitioning = True
+            try:
+                if not await self._stop_session():
+                    raise UnavailableError(
+                        "이전 연결을 종료하지 못했습니다. 서버를 재시작해주세요."
+                    )
+                if self.closed:
+                    raise UnavailableError("서버가 종료 중입니다.")
+                self.config = self.config.model_copy(update=updated.model_dump())
+                logging.getLogger("app").setLevel(self.config.log_level)
+                self.queue = asyncio.Queue(self.config.comment_queue_size)
+                self.fault = None
+                self.broadcaster.begin_session(self._status(source, username))
+                self.archive.diagnostic(
+                    "session_changed", self.broadcaster.status, details={"action": action}
                 )
-                self.supervisor_task.add_done_callback(
-                    partial(observe, archive=self.archive, status=self.broadcaster.status)
-                )
-            return self.broadcaster.status
+                if source is not None:
+                    self.supervisor_task = asyncio.create_task(
+                        self._supervise(), name="monitor-supervisor"
+                    )
+                    self.supervisor_task.add_done_callback(
+                        partial(observe, archive=self.archive, status=self.broadcaster.status)
+                    )
+                return self.broadcaster.status
+            finally:
+                self._transitioning = False
 
     async def _stop_workers(self) -> bool:
         if self.sink is not None:

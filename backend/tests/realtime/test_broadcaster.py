@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import datetime
 from unittest.mock import MagicMock
 
@@ -53,15 +54,50 @@ class Socket:
     async def accept(self):
         self.accepts += 1
 
-    async def send_json(self, value):
+    async def send_text(self, value):
         if self.broken:
             raise RuntimeError("disconnected")
         if self.slow:
             await asyncio.Event().wait()
-        self.messages.append(value)
+        self.messages.append(json.loads(value))
 
     async def close(self, code):
         self.closed = True
+
+
+async def test_broadcast_serializes_once_for_two_peers_and_preserves_wire_order(monkeypatch):
+    manager = WebSocketBroadcaster(Status(source="mock", state="connected", message="ok"))
+    first, second = Socket(), Socket()
+    serialized = []
+    original = Comment.model_dump_json
+
+    def encode(message, *args, **kwargs):
+        serialized.append(message)
+        return original(message, *args, **kwargs)
+
+    for model in (Comment, Status):
+        monkeypatch.setattr(model, "model_dump_json", encode)
+    try:
+        await manager.connect(first)
+        await manager.connect(second)
+        assert serialized == [manager.status, manager.status]  # Initial snapshot per connection.
+        serialized.clear()
+        user = User(nickname="한글 👋", unique_id="u")
+        comments = [Comment(user=user, comment=body) for body in ("<script>\n댓글", "다음 댓글")]
+        manager.broadcast(comments[0])
+        manager.update_status("connected", "changed", manager.status.session_id)
+        manager.broadcast(comments[1])
+        expected = [comments[0], manager.status, comments[1]]
+        await asyncio.wait_for(
+            asyncio.gather(*(peer.queue.join() for peer in manager.clients.values())), timeout=1
+        )
+        assert serialized == expected  # Encoding is independent of the number of peers.
+        assert first.messages == second.messages
+        assert first.messages[1:] == [message.model_dump(mode="json") for message in expected]
+        assert manager.sent_comments == 4 and manager.last_comment_sent_id == comments[1].id
+    finally:
+        await manager.close()
+    assert not manager.clients and not manager.tasks
 
 
 async def test_broken_and_slow_peers_do_not_block_healthy_peer() -> None:
@@ -154,7 +190,7 @@ async def test_inflight_send_failure_keeps_its_session_and_omits_exception_text(
     sending, release = asyncio.Event(), asyncio.Event()
 
     class Failing(Socket):
-        async def send_json(self, _value):
+        async def send_text(self, _value):
             sending.set()
             await release.wait()
             raise RuntimeError("private comment payload and token")
@@ -169,7 +205,7 @@ async def test_inflight_send_failure_keeps_its_session_and_omits_exception_text(
     failure = next(call for call in calls if call.args[0] == "websocket_send_failed")
     assert failure.args[1].session_id == status.session_id
     assert failure.kwargs["details"]["error_type"] == "RuntimeError"
-    assert " in send_json" in failure.kwargs["details"]["location"]
+    assert " in send_text" in failure.kwargs["details"]["location"]
     assert "private comment payload" not in str(calls) + caplog.text
     assert manager.sent_comments == 0
     assert not manager.clients

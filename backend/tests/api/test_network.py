@@ -152,14 +152,14 @@ async def test_storage_stall_overflow_slow_peer_and_session_change_keep_real_ws_
         async with connect(endpoint, origin=base) as slow:
             await slow.recv()
             slow_endpoint = next(iter(monitor.broadcaster.clients))
-            original_send = slow_endpoint.send_json
+            original_send = slow_endpoint.send_text
 
             async def stalled_send(message):
-                if message["type"] == "comment":
+                if json.loads(message)["type"] == "comment":
                     await asyncio.Event().wait()
                 await original_send(message)
 
-            with patch.object(slow_endpoint, "send_json", stalled_send):
+            with patch.object(slow_endpoint, "send_text", stalled_send):
                 async with connect(endpoint, origin=base) as fast:
                     await fast.recv()
                     await asyncio.wait_for(monitor.archive._queue.join(), 3)

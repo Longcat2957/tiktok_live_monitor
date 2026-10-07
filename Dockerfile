@@ -18,8 +18,9 @@ RUN uv sync --frozen --no-dev --no-install-project --no-cache
 FROM python:3.11-slim-bookworm AS runtime
 LABEL org.opencontainers.image.title="tiktok-live-monitor"
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PATH="/app/backend/.venv/bin:$PATH" \
-    STATIC_DIR=/app/frontend/build HOST=0.0.0.0 PORT=8000
-RUN groupadd --gid 10001 monitor && useradd --uid 10001 --gid monitor --no-create-home monitor
+    STATIC_DIR=/app/frontend/build HOST=0.0.0.0 PORT=8000 ARCHIVE_PATH=/data/monitor.sqlite3
+RUN groupadd --gid 10001 monitor && useradd --uid 10001 --gid monitor --no-create-home monitor \
+    && install -d -o 10001 -g 10001 -m 0700 /data
 WORKDIR /app/backend
 COPY --from=dependencies /app/backend/.venv ./.venv
 COPY backend/app ./app

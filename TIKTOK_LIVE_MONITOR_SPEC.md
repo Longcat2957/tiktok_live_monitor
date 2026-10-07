@@ -69,13 +69,13 @@ SvelteKit을 사용하되 MVP에서는 `/` 한 페이지만 사용한다. 운영
 - 상태 메시지에 `live: {state, viewers, likes}` 스냅샷을 포함한다. 통계는 최대 초당 한 번 모아 전달하고, 방송 상태 변경은 즉시 전달한다. 아직 수신하지 않은 통계는 `null`이다.
 - 댓글·활동은 replay하지 않는다. 새 브라우저에는 최신 상태·통계만 전달한다. 새로운 세션에서는 통계와 목록을 초기화한다.
 - mock은 외부 네트워크 없이 짧은 채팅·프로필·배지·네 가지 활동과 Rose 수량별 선물을 12단계로 반복한다. 방송 상태는 계속 live이며 장문·긴 URL·스크립트 문자열과 자동 일시정지·종료는 데모에서 제외한다. `/demo-gift-rose.webp`는 mock에서만 전달하는 정적 샘플이며 실방송 선물 이미지는 기존 CDN 캐시를 사용한다.
-- 계정 하나, 영구 저장 없음, bounded queue와 느린 브라우저 격리는 유지한다.
+- 계정 하나, bounded queue와 느린 브라우저 격리는 유지한다. 댓글과 안전한 백엔드 진단만 SQLite에 저장한다.
 
 ### MVP에서 제외할 기능
 
 - 댓글 분류, 질문 탐지, 키워드 필터링
 - LLM 또는 AI 기능
-- 데이터베이스와 댓글 영구 저장
+- 저장 댓글의 UI 조회·replay와 선물·활동·이미지 영구 저장
 - Redis 및 외부 메시지 큐
 - 사용자 로그인과 권한 관리
 - 운영자용 대시보드
@@ -311,7 +311,7 @@ API 및 WebSocket route를 등록한 뒤 마지막에 정적 파일을 `/`에 mo
 
 운영은 same-origin이므로 wildcard CORS를 기본으로 켜지 않는다. 개발 서버에서만 필요한 origin을 명시적으로 허용하거나 Vite proxy를 사용한다.
 
-선물 이미지는 HTTP 요청 시 필요한 것만 내려받는다. 같은 URL의 동시 요청은 하나의 다운로드를 공유하고 성공한 응답은 1시간, 실패는 30초 캐시한다. 원본 URL의 쿼리를 포함해 키를 생성하므로 주소 변경은 새 이미지로 취급한다. 원본 주소 등록은 최대 1,024개, 이미지 본문은 최대 128개·16MiB, 개별 이미지는 2MiB로 제한한다. 다운로드 동시 실행은 최대 4개, 대기를 포함한 작업은 최대 16개이며 요청에 시간 상한을 둔다. 만료·용량 초과·서버 재시작 시 다시 내려받는다. 서버 디스크에는 저장하지 않으며 댓글·활동 보관 정책은 그대로 유지한다.
+선물 이미지는 HTTP 요청 시 필요한 것만 내려받는다. 같은 URL의 동시 요청은 하나의 다운로드를 공유하고 성공한 응답은 1시간, 실패는 30초 캐시한다. 원본 URL의 쿼리를 포함해 키를 생성하므로 주소 변경은 새 이미지로 취급한다. 원본 주소 등록은 최대 1,024개, 이미지 본문은 최대 128개·16MiB, 개별 이미지는 2MiB로 제한한다. 다운로드 동시 실행은 최대 4개, 대기를 포함한 작업은 최대 16개이며 요청에 시간 상한을 둔다. 만료·용량 초과·서버 재시작 시 다시 내려받는다. 이미지와 활동은 서버 디스크에 저장하지 않는다. 댓글의 SQLite 보관은 화면 보관 수와 독립적이다.
 
 등록된 TikTok CDN 도메인(`tiktokcdn.com`, `tiktokcdn-us.com`, `tiktokcdn-eu.com`과 각각의 하위 도메인)의 HTTPS 기본/443 포트만 허용한다. 자격증명·리다이렉트·SVG/HTML은 허용하지 않으며 래스터 이미지 형식과 크기를 검사한다. 서버 응답은 브라우저 캐시 유효기간·ETag·`nosniff`를 제공하고 원본 URL이나 쿼리를 로그에 출력하지 않는다. 앱 종료 시 다운로드 작업과 HTTP 연결을 정리한다.
 
@@ -435,7 +435,7 @@ CSS `transform: rotate(90deg)`로 페이지를 회전하지 않는다. Raspberry
 - `init: true` 또는 동등한 정상적인 PID 1/signal 처리
 - `read_only: true`를 우선 적용하고 필요한 임시 쓰기 경로만 `tmpfs`로 제공
 - privileged mode, host network, Docker socket mount를 사용하지 않음
-- DB가 없으므로 volume을 억지로 추가하지 않음
+- 프로젝트별 named volume `monitor-data`를 `/data` 디렉터리에 연결하여 SQLite DB와 WAL/SHM을 보관. 루트 파일시스템의 읽기 전용과 UID/GID 10001 실행은 유지
 - Raspberry Pi에서 별도 registry 없이 `docker compose build`가 동작해야 함
 
 Docker daemon 자체는 OS 부팅 시 시작되도록 `sudo systemctl enable --now docker`를 사용한다. Compose의 restart policy가 생성된 컨테이너를 복구하므로 애플리케이션용 systemd unit을 별도로 중복 생성하지 않는다.
@@ -580,10 +580,10 @@ MVP 검증 이후에만 다음을 고려한다.
 - 질문/구매 의도 댓글 강조
 - 금칙어 또는 spam 필터
 - 여러 화면 또는 원격 태블릿 연결
-- 댓글 통계와 영구 저장
+- 댓글 통계와 저장 댓글의 UI 검색
 - managed LIVE WebSocket 공급자 전환
 
-현재 구현은 이 기능을 위해 불필요한 DB, 인증 계층 또는 범용 플러그인 시스템을 만들지 않는다. 확장은 기존 comment source → queue → WebSocket → UI 경계를 유지하는 방식으로 진행한다.
+현재 구현은 댓글·안전한 진단을 보관하는 단일 SQLite 외에 외부 DB, 인증 계층 또는 범용 플러그인 시스템을 만들지 않는다. 확장은 기존 comment source → queue → WebSocket → UI 경계를 유지하는 방식으로 진행한다.
 
 ## 계정 입력 방식 변경 (2026-09-15)
 
@@ -594,7 +594,7 @@ MVP 검증 이후에만 다음을 고려한다.
 - @아이디 또는 HTTPS TikTok 프로필·LIVE 주소만 받는다. 입력 URL로 직접 요청하거나 단축 링크를 따라가지 않는다.
 - 전환 요청은 순차 처리하며 이전 source 종료 후 큐를 비우고 새 source를 시작한다.
 - status의 `session_id`, `username`으로 모든 브라우저에 선택 계정과 전환 경계를 전달한다. 새 세션에서는 댓글을 비운다.
-- 계정은 메모리에만 보관한다. 새로고침에는 유지되고 백엔드 재시작에는 초기화된다. 댓글 영구 저장은 없다.
+- 선택 계정은 메모리에만 보관한다. 새로고침에는 유지되고 백엔드 재시작에는 초기화된다. 저장 댓글의 계정·세션 메타데이터는 SQLite에 남지만 선택값 복원이나 replay에는 사용하지 않는다.
 - 모드 선택 환경변수는 사용하지 않는다. mock도 시작 버튼을 눌러야 실행한다. 모드 변경은 모니터를 종료한 뒤 첫 화면에서 한다.
 - API는 same-origin 사용과 localhost 배포를 유지한다.
 
@@ -656,3 +656,17 @@ MVP 검증 이후에만 다음을 고려한다.
 - `lib/monitor/session.svelte.ts`는 WebSocket 상태·수신 순서·보관 상한·프레임 배치와 세션 경계를, `commands.svelte.ts`는 명시적인 변경 동작과 불확실한 응답의 결과 확인을 담당한다.
 - 상태는 페이지별 인스턴스로 생성한다. 페이지 종료 시 연결, 요청, 재확인 타이머, 예약 프레임을 정리하며 전역 싱글턴을 두지 않는다.
 - 테마·리셋·reduced motion만 전역 CSS로 유지하고 화면 영역과 댓글 스타일은 담당 컴포넌트에 둔다. 기능·디자인·API 계약은 유지한다.
+
+## 댓글과 백엔드 진단 SQLite 보관 (2026-10-07)
+
+- Python 표준 `sqlite3`로 단일 DB에 `comments`와 `diagnostics`를 보관한다. 외부 DB 서버·새 Python 의존성·새 API·프론트엔드 변경은 추가하지 않는다.
+- `EventSink`의 활성 세션 검증 이후, 표시용 큐에 넣기 전에 일반 댓글을 별도 bounded 저장 큐에 접수한다. 계정·source·session ID는 접수 시점에 복사하고, 저장 writer는 세션 전환·재연결과 독립적인 앱 수명을 갖는다. 데모 댓글도 `source=mock`으로 구별해 저장한다.
+- 단일 writer가 수신 순서대로 batch transaction을 commit한다. 앱 종료는 수신 중지 후 접수된 저장 항목을 flush한다. 저장 큐 초과·쓰기 실패·디스크 부족은 누락 수와 저장 상태로 드러내고 stderr에도 안전하게 기록한다. 유한한 큐와 장애 상황에서 무손실을 약속하지 않는다.
+- 댓글은 서버 event ID, UTC 수신 시각, 세션·source·계정, 작성자 아이디·닉네임, 본문을 저장한다. 이미지·배지·활동과 원본 TikTok payload는 보관하지 않는다.
+- 진단은 세션·source·worker·WebSocket의 전환/실패, 검증 실패·큐 초과 및 주기적인 흐름 snapshot을 명시적인 이벤트로 기록한다. 예외 타입과 파일·함수·행, 제한된 숫자·enum만 허용하고 예외 문자열·본문·쿠키·토큰·원본 URL은 진단에 넣지 않는다. 저장 자체의 오류는 DB에 다시 기록하려고 재귀 호출하지 않는다.
+- `/health`의 `storage`에서 ready/error/queued/saved_comments/saved_diagnostics/dropped를 확인한다. 저장 초기화나 writer 실패는 health 503으로 알리되 앱은 화면·API를 제공하며 DB를 삭제하지 않는다. 저장 오류를 해결한 뒤 서버를 재시작한다. 댓글 무수신만으로 정상적인 조용한 방송을 장애로 판정하지 않는다. WebSocket 송신 성공은 브라우저 렌더 완료의 보장이 아니다.
+- 운영 `ARCHIVE_PATH`는 `/data/monitor.sqlite3`, 로컬 기본값은 저장소의 `data/monitor.sqlite3`다. 최초 실행에서 디렉터리와 DB/스키마를 준비하고 기존 DB는 재사용한다. 지원하지 않는 스키마나 손상 DB를 삭제·재생성하지 않는다.
+- `/data` 전체를 프로젝트별 named volume에 mount하고 이미지에 UID/GID 10001 소유의 디렉터리를 준비한다. 기존 `.env`는 그대로 유지하고 누락된 새 설정은 기본값으로 동작한다. `install.sh`, `start.sh`, `update.sh`의 배포 흐름은 변경하지 않는다.
+- `python -m app.services.archive DESTINATION`은 readonly source 연결과 SQLite backup API로 외부 반출용 snapshot을 만든다. 기존 destination은 덮어쓰지 않는다. 실행 중 DB 파일을 단독 복사하지 않는다.
+- 시간·하루 조회는 한국 시간의 시작/종료를 timezone-aware UTC로 바꾼 `[시작, 종료)` 조건으로 조회하고 `comments.id`로 수신 순서를 정렬한다. DB를 시간/하루 단위로 회전하지 않으며 자동 보관 기한 삭제도 추가하지 않는다.
+- 컨테이너 smoke는 빈 볼륨 최초 생성과 10001 소유권, mock 댓글·진단 저장, 종료 flush, force-recreate 후 보존, 외부 backup DB를 검사한다. 고유 smoke 프로젝트의 volume만 테스트 정리 시 삭제하고 운영 volume은 삭제하지 않는다. 실제 Pi 검증 여부는 별도로 보고한다.

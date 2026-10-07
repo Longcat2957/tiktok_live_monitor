@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from TikTokLive.client.errors import UserOfflineError
-from TikTokLive.events import CommentEvent
+from TikTokLive.events import CommentEvent, FollowEvent
 
 from app.config import Settings
 from app.integrations import tiktok
@@ -131,10 +131,13 @@ def test_invalid_event_warnings_are_bounded(monkeypatch, caplog):
 
 
 async def test_unexpected_adapter_error_logs_location_without_payload(caplog):
+    archive = MagicMock()
     manager = WebSocketBroadcaster(Status(source="tiktok", state="idle", message="test"))
     source = TikTokStream(
-        EventSink(asyncio.Queue(10), manager),
-        Settings(_env_file=None, tiktok_reconnect_min_seconds=300, tiktok_reconnect_max_seconds=300),
+        EventSink(asyncio.Queue(10), manager, archive),
+        Settings(
+            _env_file=None, tiktok_reconnect_min_seconds=300, tiktok_reconnect_max_seconds=300
+        ),
         "test",
     )
     fake = MagicMock()
@@ -143,8 +146,8 @@ async def test_unexpected_adapter_error_logs_location_without_payload(caplog):
         raise RuntimeError("private event payload")
 
     fake.start = AsyncMock(side_effect=failing_start)
-    fake.disconnect = AsyncMock()
-    fake.web.close = AsyncMock()
+    fake.disconnect = AsyncMock(side_effect=RuntimeError("private disconnect payload"))
+    fake.web.close = AsyncMock(side_effect=RuntimeError("private http payload"))
     with patch("app.integrations.tiktok.TikTokLiveClient", return_value=fake):
         task = asyncio.create_task(source.run())
         try:
@@ -157,6 +160,46 @@ async def test_unexpected_adapter_error_logs_location_without_payload(caplog):
     assert "RuntimeError at " in caplog.text
     assert " in failing_start" in caplog.text
     assert "private event payload" not in caplog.text
+    calls = archive.diagnostic.call_args_list
+    failures = [call for call in calls if call.args[0] == "tiktok_adapter_failed"]
+    assert failures[0].kwargs["details"]["error_type"] == "RuntimeError"
+    assert " in failing_start" in failures[0].kwargs["details"]["location"]
+    cleanup = [call for call in calls if call.args[0] == "tiktok_cleanup_failed"]
+    assert {call.kwargs["details"]["phase"] for call in cleanup} == {"disconnect", "http_close"}
+    assert any(call.args[0] == "tiktok_retry_scheduled" for call in calls)
+    assert "private" not in str(calls)
+
+
+def test_invalid_events_and_upstream_observation_omit_payload(monkeypatch, caplog):
+    monkeypatch.setitem(tiktok._invalid_events, "comment", 0)
+    archive = MagicMock()
+    manager = WebSocketBroadcaster(Status(source="tiktok", state="connected", message=""))
+    sink = EventSink(asyncio.Queue(10), manager, archive)
+    source = TikTokStream(sink, Settings(_env_file=None), "test")
+    event = SimpleNamespace(
+        user=SimpleNamespace(nickname="n", unique_id="u"), comment="private-payload" * 2000
+    )
+    for _ in range(9):
+        source.on_comment(event)
+    source.on_activity(FollowEvent.from_dict({}))
+
+    class UnreadResponse:
+        @property
+        def raw(self):
+            raise AssertionError("raw response must not be inspected")
+
+    source.on_upstream_message(UnreadResponse())
+    snapshot = sink.snapshot()
+    assert snapshot["upstream_messages"] == 1
+    assert snapshot["last_upstream_message_at"] is not None
+    assert snapshot["invalid_comments"] == 9
+    assert snapshot["invalid_activities"] == 1
+    calls = archive.diagnostic.call_args_list
+    comment_failures = [call for call in calls if call.args[0] == "invalid_comment"]
+    assert [call.kwargs["details"]["count"] for call in comment_failures] == [1, 2, 4, 8]
+    assert comment_failures[0].kwargs["details"]["error_type"] == "ValidationError"
+    assert "private-payload" not in str(calls) + caplog.text
+    assert sink.queue.empty()
 
 
 async def test_upstream_cleanup_swallowing_cancel_cannot_restart_source():

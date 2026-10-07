@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from functools import partial
 from itertools import count
 from typing import Literal, Protocol
 
@@ -11,6 +12,7 @@ from ..realtime.broadcaster import WebSocketBroadcaster
 from ..schemas.events import FeedEvent, SourceName, Status
 from ..schemas.health import HealthResponse, QueueInfo
 from ..schemas.settings import SettingsResponse
+from .archive import Archive
 from .demo import DemoStream
 from .errors import ConflictError, InvalidSettingsError, UnavailableError
 from .event_sink import EventSink
@@ -25,7 +27,9 @@ class EventStream(Protocol):
     async def run(self) -> None: ...
 
 
-def observe(task: asyncio.Task[None]) -> None:
+def observe(
+    task: asyncio.Task[None], *, archive: Archive | None = None, status: Status | None = None
+) -> None:
     if not task.cancelled():
         if (error := task.exception()) is not None:
             logger.error(
@@ -34,6 +38,17 @@ def observe(task: asyncio.Task[None]) -> None:
                 type(error).__name__,
                 exception_location(error),
             )
+            if archive is not None:
+                archive.diagnostic(
+                    "worker_failed",
+                    status,
+                    level="error",
+                    details={
+                        "worker": task.get_name(),
+                        "error_type": type(error).__name__,
+                        "location": exception_location(error),
+                    },
+                )
 
 
 class MonitorService:
@@ -41,8 +56,11 @@ class MonitorService:
 
     def __init__(self, config: Settings) -> None:
         self.config = config
+        self.archive = Archive(config.archive_path)
         self.gift_images = GiftImageCache()
-        self.broadcaster = WebSocketBroadcaster(self._status(), gift_images=self.gift_images)
+        self.broadcaster = WebSocketBroadcaster(
+            self._status(), gift_images=self.gift_images, archive=self.archive
+        )
         self.queue: asyncio.Queue[FeedEvent] = asyncio.Queue(config.comment_queue_size)
         self.stream_task: asyncio.Task[None] | None = None
         self.consumer_task: asyncio.Task[None] | None = None
@@ -55,6 +73,41 @@ class MonitorService:
         self.fault: str | None = None
         self.recoveries = 0
         self.demo_sequence = count()
+        self.diagnostics_task: asyncio.Task[None] | None = None
+
+    async def initialize(self) -> None:
+        if self.diagnostics_task is not None:
+            return
+        await self.archive.start()
+        self.archive.diagnostic("process_started", self.broadcaster.status)
+        self.diagnostics_task = asyncio.create_task(
+            self._record_snapshots(), name="pipeline-diagnostics"
+        )
+        self.diagnostics_task.add_done_callback(partial(observe, archive=self.archive))
+
+    def _record_snapshot(self) -> None:
+        details = self.sink.snapshot() if self.sink is not None and self.sink.active else {}
+        storage = self.archive.get_health()
+        details.update(
+            {
+                "sent_comments": self.broadcaster.sent_comments,
+                "last_comment_sent_at": self.broadcaster.last_comment_sent_at,
+                "last_comment_sent_id": self.broadcaster.last_comment_sent_id,
+                "websocket_connections": len(self.broadcaster.clients),
+                "source_queue_size": self.queue.qsize(),
+                "dropped_feed_events": self.broadcaster.dropped_comments,
+                "slow_disconnects": self.broadcaster.slow_disconnects,
+                "storage_queued": storage.queued,
+                "storage_dropped": storage.dropped,
+                "storage_error": storage.error,
+            }
+        )
+        self.archive.diagnostic("pipeline_snapshot", self.broadcaster.status, details=details)
+
+    async def _record_snapshots(self) -> None:
+        while True:
+            await asyncio.sleep(30)
+            self._record_snapshot()
 
     def _status(self, source: SourceName | None = None, username: str | None = None) -> Status:
         return Status(
@@ -74,9 +127,12 @@ class MonitorService:
     @property
     def healthy(self) -> bool:
         active = self.broadcaster.status.state != "idle"
+        storage = self.archive.get_health()
         return (
             not self.closed
             and self.fault is None
+            and storage.ready
+            and storage.error is None
             and (not active or self.supervisor_task is not None and not self.supervisor_task.done())
         )
 
@@ -104,6 +160,7 @@ class MonitorService:
             recoveries=self.recoveries,
             dropped_comments=self.broadcaster.dropped_comments,
             slow_disconnects=self.broadcaster.slow_disconnects,
+            storage=self.archive.get_health(),
         )
 
     async def get_gift_image(self, key: str) -> CachedImage | None:
@@ -200,15 +257,22 @@ class MonitorService:
             self.queue = asyncio.Queue(self.config.comment_queue_size)
             self.fault = None
             self.broadcaster.begin_session(self._status(source, username))
+            self.archive.diagnostic(
+                "session_changed", self.broadcaster.status, details={"action": action}
+            )
             if source is not None:
                 self.supervisor_task = asyncio.create_task(
                     self._supervise(), name="monitor-supervisor"
                 )
-                self.supervisor_task.add_done_callback(observe)
+                self.supervisor_task.add_done_callback(
+                    partial(observe, archive=self.archive, status=self.broadcaster.status)
+                )
             return self.broadcaster.status
 
     async def _stop_workers(self) -> bool:
         if self.sink is not None:
+            if self.sink.active:
+                self._record_snapshot()
             self.sink.active = False
         workers = {t for t in (self.stream_task, self.consumer_task) if t is not None}
         for task in workers:
@@ -222,6 +286,8 @@ class MonitorService:
 
     async def _stop_session(self) -> bool:
         if self.sink is not None:
+            if self.sink.active:
+                self._record_snapshot()
             self.sink.active = False
         supervisor = self.supervisor_task
         if supervisor is not None and not supervisor.done():
@@ -240,8 +306,11 @@ class MonitorService:
         self.stuck = {task for task in self.stuck if not task.done()}
         if self.stuck:
             self.fault = "shutdown_timeout"
+            self.archive.diagnostic("shutdown_timeout", self.broadcaster.status, level="error")
             self.broadcaster.update_status(
-                "error", "연결 종료 시간 초과 · 서버 재시작 필요", self.broadcaster.status.session_id
+                "error",
+                "연결 종료 시간 초과 · 서버 재시작 필요",
+                self.broadcaster.status.session_id,
             )
             return False
         self.stream_task = self.consumer_task = self.supervisor_task = None
@@ -250,7 +319,7 @@ class MonitorService:
     async def _supervise(self) -> None:
         delay = self.config.tiktok_reconnect_min_seconds
         while True:
-            self.sink = EventSink(self.queue, self.broadcaster)
+            self.sink = EventSink(self.queue, self.broadcaster, self.archive)
             self.fault = None
             self.sink.status("connecting", "댓글 수신 준비 중")
             try:
@@ -260,7 +329,9 @@ class MonitorService:
                 )
                 self.stream_task = asyncio.create_task(stream.run(), name="event-stream")
                 for task in (self.consumer_task, self.stream_task):
-                    task.add_done_callback(observe)
+                    task.add_done_callback(
+                        partial(observe, archive=self.archive, status=self.broadcaster.status)
+                    )
                 await asyncio.wait(
                     {self.consumer_task, self.stream_task}, return_when=asyncio.FIRST_COMPLETED
                 )
@@ -272,6 +343,12 @@ class MonitorService:
                     "Worker startup failed: %s at %s",
                     type(exc).__name__,
                     exception_location(exc),
+                )
+                self.archive.diagnostic(
+                    "worker_startup_failed",
+                    self.broadcaster.status,
+                    level="error",
+                    details={"error_type": type(exc).__name__, "location": exception_location(exc)},
                 )
             finally:
                 stopped = await self._stop_workers()
@@ -287,11 +364,17 @@ class MonitorService:
                 return
             self.recoveries += 1
             logger.warning("Worker stopped; retrying in %.2fs", delay)
+            self.archive.diagnostic(
+                "worker_retry", self.broadcaster.status, level="warning", details={"delay": delay}
+            )
             await asyncio.sleep(delay)
             delay = min(delay * 2, self.config.tiktok_reconnect_max_seconds)
 
     async def close(self) -> None:
         self.closed = True
+        if self.diagnostics_task is not None:
+            self.diagnostics_task.cancel()
+            await asyncio.gather(self.diagnostics_task, return_exceptions=True)
         if self.commands:
             _, pending = await asyncio.wait(self.commands, timeout=STOP_TIMEOUT + 1)
             for task in pending:
@@ -303,4 +386,8 @@ class MonitorService:
                 await self._stop_session()
             await self.broadcaster.close()
         finally:
-            await self.gift_images.close()
+            try:
+                await self.gift_images.close()
+            finally:
+                self.archive.diagnostic("process_stopped", self.broadcaster.status)
+                await self.archive.close()

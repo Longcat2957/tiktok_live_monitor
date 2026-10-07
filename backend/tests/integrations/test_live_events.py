@@ -38,7 +38,8 @@ USER = {"nickname": "시청자", "displayId": "viewer"}
 async def test_upstream_wire_events_reach_registered_listeners_without_payload_logs():
     manager = WebSocketBroadcaster(Status(source="tiktok", state="connecting", message=""))
     queue = asyncio.Queue(20)
-    source = TikTokStream(EventSink(queue, manager), Settings(_env_file=None), "test")
+    sink = EventSink(queue, manager)
+    source = TikTokStream(sink, Settings(_env_file=None), "test")
     client = TikTokLiveClient(unique_id="test")
     ready = asyncio.Event()
     connection = asyncio.create_task(asyncio.Event().wait())
@@ -75,6 +76,7 @@ async def test_upstream_wire_events_reach_registered_listeners_without_payload_l
             await deliver(
                 "WebcastChatMessage", CommentEvent.from_dict({"user": USER, "content": "hello"})
             )
+            assert sink.snapshot()["upstream_messages"] == 1
             gift = {
                 "user": USER,
                 "gift": {

@@ -6,12 +6,15 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: "8000"
+      ARCHIVE_PATH: /data/monitor.sqlite3
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped
     init: true
     stop_grace_period: 20s
     read_only: true
+    volumes:
+      - monitor-data:/data
     tmpfs:
       - /tmp:size=64m,mode=1777
     cap_drop:
@@ -29,3 +32,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  monitor-data:

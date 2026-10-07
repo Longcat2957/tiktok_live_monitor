@@ -2,12 +2,19 @@ import asyncio
 import logging
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from time import monotonic
+from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from fastapi import WebSocket
 
-from ..schemas.events import Activity, FeedEvent, LiveInfo, Message, SourceState, Status
+from ..diagnostics import exception_location
+from ..schemas.events import Activity, Comment, FeedEvent, LiveInfo, Message, SourceState, Status
 from ..services.gift_images import GiftImageCache
+
+if TYPE_CHECKING:
+    from ..services.archive import Archive
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +32,7 @@ def enqueue_event(queue: asyncio.Queue[FeedEvent], event: FeedEvent) -> bool:
 class Peer:
     queue: asyncio.Queue[Message]
     task: asyncio.Task[None]
+    id: str
 
 
 class WebSocketBroadcaster:
@@ -35,6 +43,7 @@ class WebSocketBroadcaster:
         send_timeout: float = 5,
         max_clients: int = 16,
         gift_images: GiftImageCache | None = None,
+        archive: "Archive | None" = None,
     ) -> None:
         self.status = status
         self.live_dirty = False
@@ -47,11 +56,30 @@ class WebSocketBroadcaster:
         self.clients: dict[WebSocket, Peer] = {}
         self.tasks: set[asyncio.Task[None]] = set()
         self.gift_images = gift_images
+        self.archive = archive
+        # Count successful transport writes across peers, not browser-render acknowledgements.
+        self.sent_comments = 0
+        self.last_comment_sent_at: str | None = None
+        self.last_comment_sent_id: str | None = None
+
+    def _diagnostic(
+        self,
+        event: str,
+        status: Status | None = None,
+        *,
+        level: str = "info",
+        details: dict[str, str | int | float | bool | None] | None = None,
+    ) -> None:
+        if self.archive is not None:
+            self.archive.diagnostic(event, status or self.status, level=level, details=details)
 
     async def connect(self, socket: WebSocket) -> bool:
         if socket in self.clients:
             return True
         if len(self.tasks) + self.accepting >= self.max_clients:
+            self._diagnostic(
+                "websocket_peer_limit", level="warning", details={"max_clients": self.max_clients}
+            )
             await socket.close(code=1013)
             return False
         self.accepting += 1
@@ -59,32 +87,65 @@ class WebSocketBroadcaster:
             await socket.accept()
             queue: asyncio.Queue[Message] = asyncio.Queue(self.capacity)
             queue.put_nowait(self.status)
-            task = asyncio.create_task(self._send(socket, queue))
+            peer_id = str(uuid4())
+            task = asyncio.create_task(self._send(socket, queue, peer_id))
             self.tasks.add(task)
             task.add_done_callback(self.tasks.discard)
-            self.clients[socket] = Peer(queue, task)
+            self.clients[socket] = Peer(queue, task, peer_id)
+            self._diagnostic("websocket_connected", details={"peer_id": peer_id})
         finally:
             self.accepting -= 1
         # Enter the sender's try/finally before an immediate burst can cancel it.
         await asyncio.sleep(0)
         return socket in self.clients
 
-    async def _send(self, socket: WebSocket, queue: asyncio.Queue[Message]) -> None:
+    async def _send(self, socket: WebSocket, queue: asyncio.Queue[Message], peer_id: str) -> None:
+        context = self.status
+        close_reason = "cancelled"
         try:
             while True:
                 message = await queue.get()
+                # Preserve the session of an in-flight send across a later session boundary.
+                context = message if isinstance(message, Status) else self.status
                 try:
                     async with asyncio.timeout(self.send_timeout):
                         await socket.send_json(message.model_dump(mode="json"))
+                    if isinstance(message, Comment):
+                        self.sent_comments += 1
+                        self.last_comment_sent_at = datetime.now(UTC).isoformat()
+                        self.last_comment_sent_id = message.id
                 finally:
                     queue.task_done()
         except TimeoutError:
+            close_reason = "send_timeout"
             self.slow_disconnects += 1
             logger.warning("WebSocket send timed out")
-        except (Exception, asyncio.CancelledError):
+            self._diagnostic(
+                "websocket_send_timeout",
+                context,
+                level="warning",
+                details={"peer_id": peer_id, "timeout_seconds": self.send_timeout},
+            )
+        except asyncio.CancelledError:
             logger.debug("WebSocket sender closed")
+        except Exception as exc:
+            close_reason = "send_failed"
+            logger.debug("WebSocket sender closed: %s", type(exc).__name__)
+            self._diagnostic(
+                "websocket_send_failed",
+                context,
+                level="warning",
+                details={
+                    "peer_id": peer_id,
+                    "error_type": type(exc).__name__,
+                    "location": exception_location(exc),
+                },
+            )
         finally:
             self.clients.pop(socket, None)
+            self._diagnostic(
+                "websocket_disconnected", details={"peer_id": peer_id, "reason": close_reason}
+            )
             with suppress(Exception):
                 await asyncio.wait_for(socket.close(code=1013), timeout=1)
 
@@ -115,6 +176,11 @@ class WebSocketBroadcaster:
             if peer.queue.full():
                 self.slow_disconnects += 1
                 logger.warning("Disconnecting slow WebSocket client (queue full)")
+                self._diagnostic(
+                    "websocket_queue_full",
+                    level="warning",
+                    details={"peer_id": peer.id, "capacity": self.capacity},
+                )
                 self.clients.pop(socket, None)
                 peer.task.cancel()
             else:

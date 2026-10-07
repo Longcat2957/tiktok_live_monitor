@@ -56,6 +56,8 @@ test -f .env || cp .env.example .env
 
 `.env`는 Git에서 제외되며, 지원하는 설정은 셸 환경변수가 `.env`보다 우선합니다. `MONITOR_IMAGE`는 Docker 운영 이미지 선택에만 사용하며 개발 서버에는 영향을 주지 않습니다.
 
+개발 실행은 기본적으로 저장소의 `data/monitor.sqlite3`에 댓글과 안전한 백엔드 진단을 저장합니다. 디렉터리와 DB는 최초 실행에서 만들고 Git과 Docker build context에서 제외합니다. 다른 경로는 `ARCHIVE_PATH`로 지정할 수 있습니다. 데모도 `source=mock`으로 저장하며, 계정 선택과 화면 목록은 서버 재시작 시 초기화되어도 DB는 유지됩니다. 외부 snapshot과 시간별 조회는 [SQLite 보관 안내](installation-deploy.md#sqlite-보관과-외부-백업)를 참고하세요.
+
 ## 3. 의존성 설치
 
 ```bash
@@ -161,7 +163,7 @@ pnpm test:e2e
 
 E2E는 `18765`, `18768`에 테스트용 백엔드(테스트가 데모를 명시적으로 시작), `18766`에 Vite 프록시를 실행하고 종료하므로 해당 포트를 비워두세요. 정적 빌드는 `frontend/build`에 생성됩니다. 빌드 후 개발 백엔드를 재시작하면 `http://127.0.0.1:8000`에서도 UI를 확인할 수 있습니다.
 
-Docker가 설치되어 있다면 저장소 루트에서 `./scripts/test-container.sh`로 운영 이미지 빌드·실행까지 확인합니다. Compose 2.24.4 이상과 curl이 필요하며 임시 localhost 포트·별도 프로젝트를 사용합니다. 이 검사는 `.env`나 실행 중인 모니터를 변경하지 않습니다. `main`의 Docker CI는 AMD64와 ARM64에서 각각 실행합니다. 평소 개발에는 `dev.sh`를 사용하고, 현재 소스의 운영 동작은 `./scripts/start.sh --build`로 확인합니다.
+Docker가 설치되어 있다면 저장소 루트에서 `./scripts/test-container.sh`로 운영 이미지 빌드·실행까지 확인합니다. Compose 2.24.4 이상, curl, 외부 snapshot을 검사할 Python 3가 필요하며 임시 localhost 포트·별도 프로젝트를 사용합니다. 빈 volume에서 SQLite 생성·소유권, mock 댓글·진단, 종료 flush, 컨테이너 재생성 후 보존과 외부 snapshot을 확인하고 해당 테스트 volume만 정리합니다. 이 검사는 `.env`나 실행 중인 모니터를 변경하지 않습니다. `main`의 Docker CI는 AMD64와 ARM64에서 각각 실행합니다. 평소 개발에는 `dev.sh`를 사용하고, 현재 소스의 운영 동작은 `./scripts/start.sh --build`로 확인합니다.
 
 ## 6. 소스 업데이트
 

@@ -2,7 +2,7 @@
 
 현재 기준 버전은 **v1.0.0**입니다. 프론트엔드·백엔드 패키지는 `1.0.0`이며 화면 푸터는 프론트엔드 패키지 버전에서 읽습니다.
 
-Raspberry Pi 4 + Raspberry Pi OS Desktop 64-bit에서 실행하는 한 계정 전용 댓글 모니터입니다. 모든 일반 댓글을 받은 순서대로 표시하며, 기본적으로 최신 댓글·활동 알림 30개만 보관합니다. TikTok 연결 및 브라우저 연결은 자동으로 복구됩니다. 댓글 저장, 분류, 로그인, 외부 DB는 없습니다.
+Raspberry Pi 4 + Raspberry Pi OS Desktop 64-bit에서 실행하는 한 계정 전용 댓글 모니터입니다. 모든 일반 댓글을 받은 순서대로 표시하며, 화면에는 기본적으로 최신 댓글·활동 알림 30개만 보관합니다. TikTok 연결 및 브라우저 연결은 자동으로 복구됩니다. 댓글과 안전한 백엔드 진단은 단일 SQLite에 저장하며 분류, 로그인, 외부 DB는 없습니다. [외부 백업과 시간별 조회](installation-deploy.md#sqlite-보관과-외부-백업)를 지원하고 저장 댓글은 replay하지 않습니다.
 
 ## 설치 가이드
 
@@ -97,7 +97,7 @@ CI를 건너뛴 문서·스크립트 커밋에는 새 이미지가 없습니다.
 
 선물은 한 개일 때 **Rose 선물을 보냈어요**, 여러 개일 때 **Rose 5개를 보냈어요**처럼 문장으로 표시합니다. 선물 이름·수량을 강조하고 안내 문구는 조금 작게 표시합니다. 이벤트에 유효한 이미지 주소가 있으면 TikTok이 제공한 선물 그림을 함께 표시하고, 주소 누락·잘못된 주소·로딩 실패에는 문구만 유지합니다. 선물 종류별 그림이나 이름 목록은 앱에서 관리하지 않습니다. 이미지도 댓글 글자 배율을 따르며, 별도의 선물 목록 조회나 금액 환산은 하지 않습니다.
 
-선물 이미지는 화면에 필요한 시점에 서버가 내려받아 메모리에 1시간 캐시합니다. 같은 전체 URL의 동시 요청은 하나로 합치므로 여러 화면에서 같은 선물을 표시해도 다운로드를 공유합니다. 화면에는 `/gift-images/<해시>` 주소를 전달하고 브라우저 캐시도 사용합니다. 이미지 캐시는 최대 128개·16MiB, 이미지 하나는 최대 2MiB이며 실패한 다운로드는 30초 동안 재시도를 억제합니다. 만료·용량 초과로 제거·서버 재시작 시에는 다시 다운로드하고 URL이 바뀌면 별도 이미지로 처리합니다. 댓글·활동이나 이미지 파일을 서버 디스크에 저장하지 않습니다.
+선물 이미지는 화면에 필요한 시점에 서버가 내려받아 메모리에 1시간 캐시합니다. 같은 전체 URL의 동시 요청은 하나로 합치므로 여러 화면에서 같은 선물을 표시해도 다운로드를 공유합니다. 화면에는 `/gift-images/<해시>` 주소를 전달하고 브라우저 캐시도 사용합니다. 이미지 캐시는 최대 128개·16MiB, 이미지 하나는 최대 2MiB이며 실패한 다운로드는 30초 동안 재시도를 억제합니다. 만료·용량 초과로 제거·서버 재시작 시에는 다시 다운로드하고 URL이 바뀌면 별도 이미지로 처리합니다. 활동과 이미지 파일은 서버 디스크에 저장하지 않습니다.
 
 글자 크기 조절은 댓글·활동 본문, 작성자 이름·아이디, 프로필, 레벨·구독자·활동 칩과 활동 카드의 여백에 같은 배율을 적용합니다. 상단 방송 아이디·복사 버튼·DEMO 텍스트·시청자 수·좋아요 수는 글자 배율과 관계없이 같은 크기를 유지합니다. 방송 아이디는 텍스트와 복사 아이콘으로 표시하며, 클릭하거나 키보드 Enter로 복사할 수 있습니다. 복사 버튼은 44px 이상의 터치 높이를 유지합니다.
 
@@ -125,8 +125,9 @@ CI를 건너뛴 문서·스크립트 커밋에는 새 이미지가 없습니다.
 | `LOG_LEVEL` | `INFO`, DEBUG/INFO/WARNING/ERROR/CRITICAL |
 | `HOST`, `PORT` | `0.0.0.0`, `8000`. Compose에서는 이 값으로 고정 |
 | `STATIC_DIR` | 기본 `frontend/build`; 컨테이너는 `/app/frontend/build` |
+| `ARCHIVE_PATH` | 기본 `data/monitor.sqlite3`; Compose에서는 `/data/monitor.sqlite3`로 고정 |
 
-설정 오류는 시작 시 Pydantic 검증 오류로 표시됩니다. `.env`는 Git 및 Docker build context에서 제외됩니다. 현재 편집 가능한 설정은 `/config`에서 조회합니다. 목록 보관 수는 WebSocket 상태 메시지에 포함해 모든 브라우저에 동기화합니다. 모달 변경은 메모리에만 반영하며 `.env`를 쓰지 않습니다. 새로고침·모니터 종료에도 숫자 설정은 유지되고, 백엔드 재시작 시 `.env` 초기값으로 돌아갑니다. `HOST`, `PORT`, `STATIC_DIR`은 런타임 변경 대상이 아닙니다.
+설정 오류는 시작 시 Pydantic 검증 오류로 표시됩니다. `.env`는 Git 및 Docker build context에서 제외됩니다. 현재 편집 가능한 설정은 `/config`에서 조회합니다. 목록 보관 수는 WebSocket 상태 메시지에 포함해 모든 브라우저에 동기화합니다. 모달 변경은 메모리에만 반영하며 `.env`를 쓰지 않습니다. 새로고침·모니터 종료에도 숫자 설정은 유지되고, 백엔드 재시작 시 `.env` 초기값으로 돌아갑니다. `HOST`, `PORT`, `STATIC_DIR`, `ARCHIVE_PATH`는 런타임 변경 대상이 아닙니다.
 
 수신 큐가 꽉 차면 가장 오래된 댓글·활동 이벤트를 버리고 누락 수를 집계합니다. 기존 `dropped_comments` 카운터에는 활동 알림 누락도 포함됩니다. 과부하 로그는 누적 수가 1, 2, 4, 8…일 때만 출력합니다. 브라우저별 큐는 100개이며 전송이 5초 이상 지연되거나 큐가 가득 차면 해당 연결만 종료합니다. 정상 수신 시 필터 없이 표시하지만, 이 과부하 상황 또는 네트워크 단절 동안의 전달까지 보장하지는 않습니다. 빈 댓글, 변환 불가능한 이벤트, 본문 10,000자 또는 이름·아이디 256자를 초과한 이벤트는 건너뜁니다. 브라우저 연결은 최대 16개입니다.
 
@@ -142,6 +143,7 @@ CI를 건너뛴 문서·스크립트 커밋에는 새 이미지가 없습니다.
 | `schemas/` | API 요청·응답과 댓글·활동·방송 상태 계약 |
 | `services/monitor.py` | `MonitorService`: 세션 전환·작업 종료·복구, 상태·설정 조회 |
 | `services/demo.py`, `event_sink.py` | 데모 생성과 세션별 수신 이벤트 전달 |
+| `services/archive.py` | 댓글·안전한 진단 SQLite writer와 외부 snapshot CLI |
 | `integrations/tiktok.py` | `TikTokStream`: TikTokLive 연결·이벤트 변환·재연결 |
 | `realtime/broadcaster.py` | `WebSocketBroadcaster`: 연결별 송신 큐·느린 브라우저 격리 |
 
@@ -246,7 +248,7 @@ uv run python profile_pipeline.py --slow-client-ms 100 --peer-capacity 4
 ./scripts/start.sh --build
 ```
 
-Node 빌드 단계와 Python 의존성 단계를 분리하며 최종 이미지에는 백엔드, production 가상환경, 정적 UI만 들어갑니다. 비root UID 10001, 읽기 전용 루트, `/tmp` tmpfs, localhost 포트만 사용합니다. Node, pnpm, uv 및 개발 의존성은 최종 이미지에 복사하지 않습니다. Python slim 베이스가 제공하는 pip는 남아 있지만 런타임 패키지 설치에는 사용하지 않습니다.
+Node 빌드 단계와 Python 의존성 단계를 분리하며 최종 이미지에는 백엔드, production 가상환경, 정적 UI만 들어갑니다. 비root UID 10001, 읽기 전용 루트, `/tmp` tmpfs, `/data` 영속 volume, localhost 포트를 사용합니다. Node, pnpm, uv 및 개발 의존성은 최종 이미지에 복사하지 않습니다. Python slim 베이스가 제공하는 pip는 남아 있지만 런타임 패키지 설치에는 사용하지 않습니다.
 
 ## GitHub Actions CI
 
@@ -282,7 +284,7 @@ docker pull longcat1132/tiktok-live-monitor:latest
 
 Pi의 `scripts/install.sh`와 `scripts/update.sh`는 기본적으로 Docker Hub 이미지를 다운로드합니다. `--build`를 지정하면 Pi에서 직접 빌드합니다. Docker Hub 업로드는 Pi 자동 배포를 수행하지 않습니다. 앱 변경 시에는 해당 발행 커밋의 Frontend CI·Backend CI·Docker CI가 모두 통과했는지 확인하세요. 문서·스크립트만 바꾸는 커밋은 로컬 검증 후 커밋 메시지에 `[skip ci]`를 넣어 자동 CI 실행을 건너뛸 수 있습니다.
 
-운영 컨테이너 검증은 로컬에서도 실행할 수 있습니다(Docker Engine, Compose 2.24.4 이상, curl 필요).
+운영 컨테이너 검증은 로컬에서도 실행할 수 있습니다(Docker Engine, Compose 2.24.4 이상, curl, Python 3 필요).
 
 ```bash
 ./scripts/test-container.sh
@@ -329,7 +331,8 @@ tail -f ~/.local/state/tiktok-live-monitor/kiosk.log
 | Docker/Compose 없음 | `docker version`, `docker compose version`, `systemctl status docker` 확인 후 공식 설치 절차를 적용합니다. |
 | ARM64 빌드 실패 | `uname -m`이 `aarch64`, `dpkg --print-architecture`가 `arm64`인지 확인합니다. 32-bit OS는 대상이 아닙니다. 디스크·RAM·네트워크와 최초 실패 레이어를 확인합니다. x86에서 교차 빌드하려면 별도 ARM builder 또는 QEMU가 필요합니다. |
 | unhealthy / 재시작 반복 | `docker compose logs --tail=100 app`, `docker inspect --format '{{json .State.Health}}' "$(docker compose ps -q app)"`로 설정 오류, 포트, 메모리 부족을 확인합니다. TikTok 오프라인 자체는 health 실패가 아닙니다. |
-| 댓글 일부 누락 | queue full / slow WebSocket 경고 확인. 처리량을 낮추거나 큐 크기를 조정합니다. 저장·재전송은 하지 않습니다. |
+| 댓글 일부 누락·중단 | `/health`의 저장 상태·누락 카운터와 SQLite `diagnostics`의 `pipeline_snapshot`, 세션·worker·WebSocket 기록, queue full / slow WebSocket 경고를 확인합니다. snapshot의 수신·송신 카운터와 마지막 시각으로 서버 흐름을 확인하며 송신 성공이 브라우저 표시 성공을 보장하지는 않습니다. 저장과 표시 큐는 독립적이며 저장 댓글을 자동 재전송하지 않습니다. 댓글이 없는 조용한 방송만으로 단절을 판정하지 않습니다. |
+| SQLite 저장 오류 | `/health`의 `storage.error`, 안전한 stderr 로그와 디스크 여유 공간·`/data` 권한을 확인합니다. 저장 오류 시 health는 503이며 화면 수신은 계속될 수 있습니다. 원인을 해결한 뒤 재시작하고 DB나 volume을 삭제하여 복구하려 하지 마세요. 저장 장애·큐 초과로 발생한 누락은 `storage.dropped`에 드러납니다. |
 
 ## 외부 의존성과 인수 확인
 

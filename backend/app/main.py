@@ -26,6 +26,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         service = MonitorService(config)
         app.state.monitor = service
         try:
+            await service.initialize()
             yield
         finally:
             await service.close()

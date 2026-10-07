@@ -1,4 +1,6 @@
 import asyncio
+import json
+import sqlite3
 from unittest.mock import patch
 
 import pytest
@@ -6,6 +8,7 @@ import pytest
 from app.config import Settings
 from app.schemas.events import Comment, User
 from app.services.errors import ConflictError, UnavailableError
+from app.services.event_sink import EventSink
 from app.services.monitor import MonitorService, observe
 
 
@@ -27,6 +30,7 @@ def make_monitor():
 
 
 async def start(monitor):
+    await monitor.initialize()
     await monitor.start(monitor.broadcaster.status.session_id, source="mock")
     await eventually(lambda: monitor.stream_task is not None)
 
@@ -58,10 +62,13 @@ async def test_unchanged_settings_keep_the_current_session_and_workers():
         queue, sink = monitor.queue, monitor.sink
         supervisor, stream = monitor.supervisor_task, monitor.stream_task
         assert await monitor.update_settings(status.session_id, {}) == status
-        assert await monitor.update_settings(
-            status.session_id,
-            {"comment_history_size": monitor.config.comment_history_size},
-        ) == status
+        assert (
+            await monitor.update_settings(
+                status.session_id,
+                {"comment_history_size": monitor.config.comment_history_size},
+            )
+            == status
+        )
         assert monitor.queue is queue and monitor.sink is sink
         assert monitor.supervisor_task is supervisor and monitor.stream_task is stream
     finally:
@@ -235,3 +242,33 @@ async def test_runtime_logging_does_not_enable_dependency_debug():
     finally:
         await monitor.close()
         app_logger.setLevel(app_level)
+
+
+async def test_archive_precedes_feed_drop_and_rejects_old_session_events():
+    monitor = make_monitor()
+    await monitor.initialize()
+    queue = asyncio.Queue(1)
+    sink = EventSink(queue, monitor.broadcaster, monitor.archive)
+    original_session = sink.session_id
+    try:
+        for body in ["one", "two", "three"]:
+            sink.publish(Comment(user=User(nickname="n", unique_id="u"), comment=body))
+        assert queue.qsize() == 1 and queue.get_nowait().comment == "three"
+        assert monitor.broadcaster.dropped_comments == 2
+        sink.upstream_message()
+        monitor.sink = sink
+        monitor._record_snapshot()
+        monitor.broadcaster.begin_session(monitor._status("mock"))
+        sink.publish(Comment(user=User(nickname="n", unique_id="u"), comment="stale"))
+    finally:
+        await monitor.close()
+    with sqlite3.connect(monitor.config.archive_path) as database:
+        assert database.execute(
+            "SELECT comment, session_id FROM comments ORDER BY id"
+        ).fetchall() == [(body, original_session) for body in ["one", "two", "three"]]
+        snapshot = database.execute(
+            "SELECT details FROM diagnostics WHERE event='pipeline_snapshot' ORDER BY id LIMIT 1"
+        ).fetchone()[0]
+        details = json.loads(snapshot)
+        assert details["received_comments"] == 3 and details["upstream_messages"] == 1
+        assert details["dropped_feed_events"] == 2

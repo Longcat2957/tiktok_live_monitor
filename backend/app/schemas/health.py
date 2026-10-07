@@ -10,6 +10,15 @@ class QueueInfo(BaseModel):
     capacity: int
 
 
+class StorageInfo(BaseModel):
+    ready: bool
+    error: str | None
+    queued: int
+    saved_comments: int
+    saved_diagnostics: int
+    dropped: int
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok", "error"]
     source: Status
@@ -20,3 +29,4 @@ class HealthResponse(BaseModel):
     recoveries: int
     dropped_comments: int
     slow_disconnects: int
+    storage: StorageInfo

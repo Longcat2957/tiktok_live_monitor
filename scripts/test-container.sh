@@ -5,6 +5,7 @@ SMOKE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tiktok-monitor-smoke.XXXXXX")"
 SMOKE_PROJECT="tiktok-monitor-smoke-$(date +%s)-$$"
 export SMOKE_IMAGE="tiktok-live-monitor:${SMOKE_PROJECT}"
 export SMOKE_ENV_FILE="$PROJECT_ROOT/.env.example"
+command -v python3 >/dev/null || { echo 'SQLite snapshot 검증에 Python 3가 필요합니다.' >&2; exit 1; }
 
 cat >"$SMOKE_DIR/compose.yaml" <<'YAML'
 services:
@@ -30,7 +31,8 @@ cleanup() {
     echo "Container smoke failed; logs: $SMOKE_DIR/container.log" >&2
     tail -n 200 "$SMOKE_DIR/container.log" >&2
   fi
-  "${compose[@]}" down --timeout 20 --remove-orphans >/dev/null 2>&1 || true
+  # This project's unique test volume never shares the production archive.
+  "${compose[@]}" down --timeout 20 --remove-orphans --volumes >/dev/null 2>&1 || true
   docker image rm "$SMOKE_IMAGE" >/dev/null 2>&1 || true
   if (( result == 0 )); then rm -rf -- "$SMOKE_DIR"; fi
   exit "$result"
@@ -42,6 +44,15 @@ trap 'exit 143' TERM
 # !override requires Docker Compose 2.24.4 or newer; config fails before building.
 "${compose[@]}" config --quiet
 "${compose[@]}" build
+"${compose[@]}" run --rm --no-deps --no-TTY app python - <<'PY'
+import os
+from pathlib import Path
+
+archive = Path(os.environ["ARCHIVE_PATH"])
+assert os.geteuid() == 10001
+assert not archive.exists(), "Smoke archive must start without a database"
+assert archive.parent.stat().st_uid == archive.parent.stat().st_gid == 10001
+PY
 "${compose[@]}" up --detach --wait --wait-timeout 120
 SMOKE_CONTAINER="$("${compose[@]}" ps --quiet app)"
 [[ -n "$SMOKE_CONTAINER" ]]
@@ -57,7 +68,9 @@ curl --fail --silent --show-error --max-time 5 "http://$SMOKE_BINDING/" --output
 import asyncio
 import json
 import os
+import sqlite3
 from html.parser import HTMLParser
+from pathlib import Path
 from urllib.parse import urljoin
 
 import httpx
@@ -80,12 +93,15 @@ class Assets(HTMLParser):
 
 async def main():
     assert os.geteuid() == 10001, "Container must run as the monitor user"
+    archive = Path(os.environ["ARCHIVE_PATH"])
+    assert archive.is_file() and archive.stat().st_uid == archive.stat().st_gid == 10001
     async with httpx.AsyncClient(base_url=BASE, headers={"Origin": BASE}, timeout=5) as client:
         health = await client.get("/health")
         assert health.status_code == 200, "Idle server must be healthy"
         assert health.json()["source"]["state"] == "idle", "Server must await an explicit start"
         assert health.json()["source"]["source"] == "tiktok"
         assert health.json()["pending_commands"] == 0, "Unexpected command at startup"
+        assert health.json()["storage"]["ready"] is True
         initial = (await client.get("/config")).json()
         assert initial["session_id"] == health.json()["source"]["session_id"]
         page = await client.get("/")
@@ -134,6 +150,13 @@ async def main():
             assert started["source"] == "mock" and started["username"] is None
             first_comment = await comment()
             async with asyncio.timeout(5):
+                with sqlite3.connect(archive.as_uri() + "?mode=ro", uri=True) as database:
+                    while not database.execute(
+                        "SELECT 1 FROM comments WHERE event_id=? AND source='mock'", (first_comment,)
+                    ).fetchone():
+                        await asyncio.sleep(0.05)
+                    assert database.execute("SELECT COUNT(*) FROM diagnostics").fetchone()[0] > 0
+            async with asyncio.timeout(5):
                 while True:
                     event = json.loads(await socket.recv())
                     if event["type"] == "activity":
@@ -160,20 +183,62 @@ async def main():
                 pass
             # Exercise process shutdown with active workers, not only an idle server.
             await change("POST", "/account", source="mock")
-            await comment()
+            last_comment = await comment()
+            Path("/tmp/archive-observed.json").write_text(json.dumps({"event_id": last_comment}))
 
 
 asyncio.run(main())
 print("Container HTTP, static assets and mock WebSocket lifecycle passed.")
 PY
 
+"${compose[@]}" exec --no-TTY app cat /tmp/archive-observed.json >"$SMOKE_DIR/archive-observed.json"
 "${compose[@]}" stop --timeout 20 app
 SMOKE_EXIT="$(docker inspect --format '{{.State.ExitCode}}' "$SMOKE_CONTAINER")"
 [[ "$SMOKE_EXIT" == 0 || "$SMOKE_EXIT" == 143 ]]
 "${compose[@]}" logs --no-color app >"$SMOKE_DIR/container.log"
 grep -q 'Application shutdown complete' "$SMOKE_DIR/container.log"
+"${compose[@]}" run --rm --no-deps --no-TTY app python - <<'PY' >"$SMOKE_DIR/archive-stopped.json"
+import json
+import os
+import sqlite3
+from pathlib import Path
+
+with sqlite3.connect(Path(os.environ["ARCHIVE_PATH"]).as_uri() + "?mode=ro", uri=True) as database:
+    assert database.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+    comments = database.execute("SELECT COUNT(*), MAX(id) FROM comments").fetchone()
+    diagnostics = database.execute("SELECT COUNT(*) FROM diagnostics").fetchone()[0]
+    print(json.dumps({"comments": comments, "diagnostics": diagnostics}))
+PY
+"${compose[@]}" up --detach --no-build --pull never --force-recreate --wait --wait-timeout 120
+SMOKE_CONTAINER="$("${compose[@]}" ps --quiet app)"
+"${compose[@]}" exec --no-TTY app python -m app.services.archive /data/smoke-backup.sqlite3
+if "${compose[@]}" exec --no-TTY app python -m app.services.archive /data/smoke-backup.sqlite3 \
+  >"$SMOKE_DIR/backup-existing.log" 2>&1; then
+  echo 'Snapshot CLI overwrote an existing destination.' >&2
+  exit 1
+fi
+docker cp "$SMOKE_CONTAINER:/data/smoke-backup.sqlite3" "$SMOKE_DIR/smoke-backup.sqlite3"
+python3 - "$SMOKE_DIR" <<'PY'
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+directory = Path(sys.argv[1])
+stopped = json.loads((directory / "archive-stopped.json").read_text())
+observed = json.loads((directory / "archive-observed.json").read_text())
+with sqlite3.connect((directory / "smoke-backup.sqlite3").as_uri() + "?mode=ro", uri=True) as database:
+    assert database.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+    assert list(database.execute("SELECT COUNT(*), MAX(id) FROM comments").fetchone()) == stopped["comments"]
+    assert database.execute("SELECT COUNT(*) FROM diagnostics").fetchone()[0] >= stopped["diagnostics"] > 0
+    assert database.execute("SELECT 1 FROM comments WHERE event_id=?", (observed["event_id"],)).fetchone(), "Shutdown must flush the last observed comment"
+    assert database.execute("PRAGMA journal_mode").fetchone()[0] == "delete", "Snapshot must be a standalone DB"
+print("SQLite creation, shutdown flush, container replacement and external snapshot passed.")
+PY
+"${compose[@]}" exec --no-TTY app rm -- /data/smoke-backup.sqlite3
+"${compose[@]}" stop --timeout 20 app
 if [[ -n "${SMOKE_PUBLISH_TAG:-}" ]]; then
   # Keep the exact tested image for CI publication after the smoke tag is removed.
   docker tag "$SMOKE_IMAGE" "$SMOKE_PUBLISH_TAG"
 fi
-echo 'Container smoke passed: non-root, read-only, localhost-only and clean shutdown.'
+echo 'Container smoke passed: non-root, read-only, localhost-only, SQLite persistence and clean shutdown.'

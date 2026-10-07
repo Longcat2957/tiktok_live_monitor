@@ -22,6 +22,7 @@ def test_health_static_and_config(tmp_path: Path):
         assert HealthResponse.model_validate(health).model_dump(mode="json") == health
         assert SettingsResponse.model_validate(settings).model_dump(mode="json") == settings
         assert health["source"]["state"] == "idle"
+        assert health["storage"]["ready"] and health["storage"]["error"] is None
         assert settings["comment_history_size"] == 17
         paths = client.get("/openapi.json").json()["paths"]
         for path, response_name in (("/health", "HealthResponse"), ("/config", "SettingsResponse")):
@@ -90,11 +91,14 @@ async def test_health_exposes_accepted_commands_until_they_finish():
             await command
 
 
-def test_monitor_dependency_override_is_shared_by_http_and_websocket():
+def test_monitor_dependency_override_is_shared_by_http_and_websocket(tmp_path):
     app = create_app(Settings(_env_file=None))
-    replacement = MonitorService(Settings(_env_file=None, comment_history_size=23))
+    replacement = MonitorService(
+        Settings(_env_file=None, comment_history_size=23, archive_path=tmp_path / "replacement.db")
+    )
     app.dependency_overrides[get_monitor] = lambda: replacement
     with TestClient(app, base_url="http://localhost") as client:
+        client.portal.call(replacement.initialize)
         assert replacement is not app.state.monitor
         config = client.get("/config").json()
         assert config == replacement.get_settings().model_dump(mode="json")
@@ -111,6 +115,7 @@ def test_monitor_dependency_override_is_shared_by_http_and_websocket():
             while socket.receive()["type"] != "websocket.close":
                 pass
         assert client.get("/health").json()["websocket_connections"] == 0
+        client.portal.call(replacement.close)
     assert not replacement.broadcaster.tasks
 
 
@@ -131,3 +136,20 @@ def test_settings_validation_is_422_but_internal_validation_error_is_500():
         assert invalid.json() == {"detail": "설정값의 허용 범위를 확인해주세요."}
         with patch.object(app.state.monitor, "get_health", side_effect=lambda: HealthResponse()):
             assert client.get("/health").status_code == 500
+
+
+def test_corrupt_archive_is_reported_without_replacing_it(tmp_path):
+    path = tmp_path / "monitor.sqlite3"
+    original = b"corrupt database - keep for investigation"
+    path.write_bytes(original)
+    app = create_app(Settings(_env_file=None, archive_path=path))
+    with TestClient(app, base_url="http://localhost") as client:
+        response = client.get("/health")
+        assert response.status_code == 503
+        assert response.json()["storage"]["error"]
+        sid = client.get("/config").json()["session_id"]
+        assert (
+            client.post("/account", json={"source": "mock", "session_id": sid}).status_code == 200
+        )
+        assert client.get("/health").json()["storage"]["dropped"] > 0
+    assert path.read_bytes() == original

@@ -10,7 +10,7 @@ Raspberry Pi 4 + Raspberry Pi OS Desktop 64-bit용입니다. 아래 명령은 Pi
 - 기본 설치는 공개 Docker Hub의 `longcat1132/tiktok-live-monitor:latest`를 다운로드합니다. Pi 64-bit에는 ARM64 이미지가 선택되며 Docker Hub 로그인은 필요 없습니다. 호스트에 Python/uv/Node/pnpm을 설치할 필요도 없습니다.
 - GitHub Actions는 `dev`에서 Frontend CI·Backend CI로 코드·브라우저 테스트를 각각 실행합니다. `main`의 Docker CI는 AMD64/ARM64 운영 컨테이너 빌드·실행을 검증한 뒤 이미지를 발행합니다. Pi에서는 설치·업데이트 스크립트를 직접 실행합니다. [태그와 CI 설정](reference.md#github-actions-ci)을 참고하세요.
 - 필요한 경우 `--build`로 현재 소스를 Pi에서 직접 빌드할 수 있습니다.
-- 댓글은 영구 저장하지 않습니다. 컨테이너는 non-root, 읽기 전용 루트 파일시스템으로 실행됩니다.
+- 댓글과 안전한 백엔드 진단은 SQLite에 저장합니다. 컨테이너는 non-root, 읽기 전용 루트 파일시스템으로 실행하고 `/data`만 영속 named volume에 연결합니다.
 
 ## 2. 장비 설치
 
@@ -99,6 +99,45 @@ cd ~/tiktok_live_monitor
 - 마지막에 `docker system df`로 이미지·컨테이너·볼륨·빌드 캐시 사용량을 출력합니다. 공유 빌드 캐시, 다른 앱의 이미지, 볼륨, 소스·`.env`·Chromium 프로필은 자동 삭제하지 않습니다. 더 오래된 무라벨 이미지도 소유자를 확정할 수 없어 자동 삭제하지 않습니다. 정리 실패는 경고로 표시하며 성공한 배포를 실패로 바꾸지는 않습니다.
 
 기존의 재빌드 전용 `update.sh`를 사용 중이라면 최초 한 번은 `git pull --ff-only`로 새 스크립트를 받아야 합니다. 이후부터는 `./scripts/update.sh`만 실행합니다.
+
+### SQLite 기능의 첫 업데이트
+
+SQLite를 포함한 이미지가 발행된 뒤 기존 `./scripts/update.sh`를 실행하면 됩니다. `install.sh`, `start.sh`, `update.sh`의 명령과 기존 `.env`는 바뀌지 않습니다. 새 Compose는 프로젝트별 `monitor-data` volume을 `/data`에 연결하고, 앱이 최초 실행에서 `/data/monitor.sqlite3`와 스키마를 만듭니다. 이미지의 `/data`는 UID/GID 10001 소유이며 앱도 같은 사용자로 DB와 WAL/SHM 파일을 생성합니다. 기존 설치에는 저장 댓글이 없으므로 과거 댓글은 복구되지 않습니다.
+
+이후 컨테이너 재시작·교체·이미지 정리는 같은 volume의 DB를 유지합니다. 저장소 디렉터리 이름이나 Compose project name을 바꾸면 다른 volume을 사용하므로 기존 project name을 유지하세요. 구 SHA/digest에 고정된 `MONITOR_IMAGE`는 SQLite 기능을 포함한 발행 이미지로 선택해야 합니다. 소스만 새로 받고 구 이미지를 계속 실행하면 이 기능이 생기지 않습니다.
+
+`/health`의 `storage.ready`가 true인지 확인합니다. 디스크 부족·권한·스키마 오류이면 `storage.error`와 안전한 stderr 로그를 확인하고 원인을 해결한 뒤 재시작합니다. 저장 오류에서 앱은 API와 화면을 제공하지만 health는 503이므로 설치/업데이트의 healthy 확인은 실패할 수 있습니다. 자동 롤백·자동 저장 재시도·DB 삭제는 하지 않습니다. `docker compose down --volumes`나 volume prune은 운영 기록을 삭제하므로 사용하지 마세요.
+
+### SQLite 보관과 외부 백업
+
+댓글과 진단은 각각 `comments`, `diagnostics` 테이블에 보관합니다. 데모 댓글은 `source=mock`으로 구별됩니다. 화면의 최근 목록 보관 수, 댓글 비우기·재연결·계정 변경은 DB 기록을 지우지 않습니다. 활동·이미지·배지와 원본 이벤트 payload는 저장하지 않고, 저장 댓글을 브라우저에 replay하지 않습니다. 자동 보관 기한 삭제는 없으므로 `docker system df`와 호스트 디스크 여유 공간을 확인하세요.
+
+저장 큐는 2,000개이고 writer는 최대 100개를 한 transaction으로 저장하며, 부분 batch도 약 1초마다 commit합니다. `/health`의 `storage.queued`는 처리 중인 batch까지 포함하고, 저장·누락 카운터는 현재 프로세스의 누적 수입니다. 강제 종료·전원 차단 시 아직 commit하지 않은 큐와 batch는 남지 않을 수 있습니다.
+
+`diagnostics`의 `pipeline_snapshot`은 30초마다, 수신 작업 종료 전에도 기록합니다. `details` JSON의 수신·상위 메시지 카운터는 worker 시도마다 초기화됩니다. `sent_comments`는 모든 WebSocket 연결의 성공한 댓글 송신을 합산한 프로세스 누적 수이므로 수신 수와 직접 비교하지 않습니다. 마지막 수신·송신 시각과 event ID도 함께 기록하며, 송신 성공은 브라우저 표시 확인을 뜻하지 않습니다. `upstream_messages`는 TikTokLive가 전달한 메시지 관찰 수이며 원시 WebSocket frame·ping·빈 응답이나 모든 upstream 변환 오류를 직접 집계하지 않습니다.
+
+실행 중인 `monitor.sqlite3` 파일을 그대로 복사하면 WAL에 commit된 기록이 빠질 수 있습니다. 다음 명령은 SQLite backup API로 snapshot을 만들고 호스트로 반출합니다. source는 readonly로 열며 기존 destination은 덮어쓰지 않습니다. 수신 중에도 실행할 수 있지만 snapshot에는 생성 시점에 commit된 데이터가 포함됩니다. 파일에는 댓글과 작성자 정보가 있으므로 접근 권한을 제한하세요.
+
+```bash
+snapshot_name="monitor-$(date -u +%Y%m%dT%H%M%SZ)-$$.sqlite3"
+docker compose exec -T app python -m app.services.archive "/data/$snapshot_name"
+docker cp "$(docker compose ps -q app):/data/$snapshot_name" "$snapshot_name"
+chmod 600 "$snapshot_name"
+```
+
+복사한 파일은 외부 PC의 SQLite 도구에서 열 수 있습니다. 복사가 성공한 뒤 임시 snapshot 하나만 제거하려면 `docker compose exec -T app rm -- "/data/$snapshot_name"`을 실행합니다. 원본 `/data/monitor.sqlite3`와 volume은 삭제하지 않습니다. snapshot은 DB 크기만큼 추가 디스크 공간을 사용하므로 여유 공간을 확인하고, 64MiB tmpfs인 `/tmp`에는 큰 DB를 백업하지 않습니다. 오래된 기록의 보관 여부는 외부에서 결정합니다.
+
+시간/하루 조회는 한국 시간의 시작과 종료를 UTC로 변환한 `[시작, 종료)` 범위를 사용합니다. 한국 시간 2026-10-07 하루는 UTC 2026-10-06 15:00부터 2026-10-07 15:00 미만입니다. 외부 snapshot에서 다음과 같이 조회하고 `id`로 수신 순서를 정렬합니다.
+
+```sql
+SELECT id, received_at, source, username, nickname, user_id, comment
+FROM comments
+WHERE received_at >= '2026-10-06T15:00:00.000+00:00'
+  AND received_at < '2026-10-07T15:00:00.000+00:00'
+ORDER BY id;
+```
+
+프로그램에서 범위를 만들 때는 `datetime(2026, 10, 7, tzinfo=ZoneInfo("Asia/Seoul")).astimezone(UTC).isoformat(timespec="milliseconds")`처럼 timezone-aware 값을 사용하고 DB와 같은 밀리초 UTC ISO 문자열로 바꿉니다. naive 시각이나 호스트 timezone에 맡기지 않습니다. 한 시간 조회도 같은 방식으로 시작/종료만 정하며 DB를 시간별 파일로 회전할 필요는 없습니다. `diagnostics.occurred_at`에도 동일한 범위 조건을 적용할 수 있습니다.
 
 ### 직접 실행, 버전 고정과 로컬 빌드
 

@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
@@ -64,8 +65,9 @@ class Socket:
 
 
 async def test_broken_and_slow_peers_do_not_block_healthy_peer() -> None:
+    archive = MagicMock()
     manager = WebSocketBroadcaster(
-        Status(source="mock", state="connected", message="ok"), send_timeout=0.03
+        Status(source="mock", state="connected", message="ok"), send_timeout=0.03, archive=archive
     )
     healthy, broken, slow = Socket(), Socket(broken=True), Socket(slow=True)
     for socket in [healthy, broken, slow, healthy]:
@@ -81,6 +83,15 @@ async def test_broken_and_slow_peers_do_not_block_healthy_peer() -> None:
     ]
     assert list(manager.clients) == [healthy]
     assert broken.closed and slow.closed
+    assert manager.sent_comments == 3
+    assert manager.last_comment_sent_id == healthy.messages[-1]["id"]
+    assert datetime.fromisoformat(manager.last_comment_sent_at).tzinfo is not None
+    assert {call.args[0] for call in archive.diagnostic.call_args_list} >= {
+        "websocket_connected",
+        "websocket_disconnected",
+        "websocket_send_failed",
+        "websocket_send_timeout",
+    }
     await manager.close()
     assert not manager.clients
 
@@ -121,8 +132,9 @@ async def test_gift_url_is_registered_without_fetch_and_feed_order_is_preserved(
 
 
 async def test_peer_queue_overflow_disconnects_only_slow_client() -> None:
+    archive = MagicMock()
     manager = WebSocketBroadcaster(
-        Status(source="mock", state="connected", message="ok"), capacity=1
+        Status(source="mock", state="connected", message="ok"), capacity=1, archive=archive
     )
     slow = Socket(slow=True)
     await manager.connect(slow)
@@ -132,6 +144,35 @@ async def test_peer_queue_overflow_disconnects_only_slow_client() -> None:
     await asyncio.sleep(0.01)
     assert not manager.clients
     assert slow.closed
+    assert any(call.args[0] == "websocket_queue_full" for call in archive.diagnostic.call_args_list)
+
+
+async def test_inflight_send_failure_keeps_its_session_and_omits_exception_text(caplog):
+    archive = MagicMock()
+    status = Status(source="mock", state="connected", message="")
+    manager = WebSocketBroadcaster(status, archive=archive)
+    sending, release = asyncio.Event(), asyncio.Event()
+
+    class Failing(Socket):
+        async def send_json(self, _value):
+            sending.set()
+            await release.wait()
+            raise RuntimeError("private comment payload and token")
+
+    socket = Failing()
+    await manager.connect(socket)
+    await sending.wait()
+    manager.begin_session(Status(source="mock", state="idle", message=""))
+    release.set()
+    await asyncio.gather(*manager.tasks)
+    calls = archive.diagnostic.call_args_list
+    failure = next(call for call in calls if call.args[0] == "websocket_send_failed")
+    assert failure.args[1].session_id == status.session_id
+    assert failure.kwargs["details"]["error_type"] == "RuntimeError"
+    assert " in send_json" in failure.kwargs["details"]["location"]
+    assert "private comment payload" not in str(calls) + caplog.text
+    assert manager.sent_comments == 0
+    assert not manager.clients
 
 
 async def test_burst_keeps_fast_peer_order_and_disconnects_only_slow_peer():

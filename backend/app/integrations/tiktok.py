@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from contextlib import suppress
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -20,6 +19,7 @@ from TikTokLive.events import (
     RoomUserSeqEvent,
     ShareEvent,
     SubNotifyEvent,
+    WebsocketResponseEvent,
 )
 
 from ..config import Settings
@@ -107,18 +107,20 @@ def parse_user(event: object) -> User:
     )
 
 
-def parse_comment(event: object) -> Comment | None:
+def parse_comment(event: object, sink: EventSink | None = None) -> Comment | None:
     try:
         body = getattr(event, "comment", None)
         if not isinstance(body, str) or not body.strip():
             raise ValueError("empty comment")
         return Comment(user=parse_user(event), comment=body)
-    except Exception:
+    except Exception as exc:
         _warn_invalid("comment")
+        if sink is not None:
+            sink.invalid_event("comment", exc)
         return None
 
 
-def parse_activity(event: object) -> Activity | None:
+def parse_activity(event: object, sink: EventSink | None = None) -> Activity | None:
     try:
         if isinstance(event, GiftEvent):
             gift = event.gift
@@ -138,8 +140,10 @@ def parse_activity(event: object) -> Activity | None:
             return Activity(kind="share", user=parse_user(event))
         if isinstance(event, SubNotifyEvent):
             return Activity(kind="subscribe", user=parse_user(event))
-    except Exception:
+    except Exception as exc:
         _warn_invalid("activity")
+        if sink is not None:
+            sink.invalid_event("activity", exc)
     return None
 
 
@@ -162,14 +166,18 @@ class TikTokStream:
 
     def on_comment(self, event: CommentEvent) -> None:
         # Synchronous callback: enqueue before the next event can overtake this one.
-        comment = parse_comment(event)
+        comment = parse_comment(event, self.sink)
         if comment:
             self.sink.publish(comment)
 
     def on_activity(self, event: object) -> None:
-        activity = parse_activity(event)
+        activity = parse_activity(event, self.sink)
         if activity:
             self.sink.publish(activity)
+
+    def on_upstream_message(self, _event: WebsocketResponseEvent) -> None:
+        # Observe the public event without inspecting its raw response or payload.
+        self.sink.upstream_message()
 
     def on_viewers(self, event: RoomUserSeqEvent) -> None:
         if type(event.total) is int and 0 <= event.total <= 9_007_199_254_740_991:
@@ -218,6 +226,7 @@ class TikTokStream:
                 client.add_listener(CommentEvent, self.on_comment)
                 client.add_listener(ConnectEvent, self.on_connect)
                 client.add_listener(DisconnectEvent, self.on_disconnect)
+                client.add_listener(WebsocketResponseEvent, self.on_upstream_message)
                 client.add_listener(RoomUserSeqEvent, self.on_viewers)
                 client.add_listener(LikeEvent, self.on_likes)
                 client.add_listener(LivePauseEvent, self.on_pause)
@@ -237,14 +246,26 @@ class TikTokStream:
             except asyncio.CancelledError:
                 raise
             except UserOfflineError:
+                self.sink.diagnostic("tiktok_offline")
                 self.status("waiting", "방송 시작 대기 중")
             except UserNotFoundError:
+                self.sink.diagnostic("tiktok_account_not_found", level="warning")
                 self.status("error", "계정을 찾을 수 없습니다 · 아이디 확인 필요")
             except (TikTokLiveError, httpx.HTTPError, OSError) as exc:
                 logger.warning("TikTok connection failed: %s", type(exc).__name__)
+                self.sink.diagnostic(
+                    "tiktok_connection_failed",
+                    level="warning",
+                    details={"error_type": type(exc).__name__, "location": exception_location(exc)},
+                )
                 self.status("error", "TikTok 연결 실패 · 네트워크 또는 서비스 확인")
             except Exception as exc:
                 failure = (type(exc), exception_location(exc))
+                self.sink.diagnostic(
+                    "tiktok_adapter_failed",
+                    level="error",
+                    details={"error_type": failure[0].__name__, "location": failure[1]},
+                )
                 if self.last_unexpected != failure:
                     logger.error(
                         "Unexpected TikTok adapter failure: %s at %s",
@@ -258,27 +279,60 @@ class TikTokStream:
             finally:
                 if client is not None:
                     try:
-                        with suppress(Exception):
+                        try:
                             async with asyncio.timeout(5):
                                 await client.disconnect()
+                        except Exception as exc:
+                            self.sink.diagnostic(
+                                "tiktok_cleanup_failed",
+                                level="warning",
+                                details={
+                                    "phase": "disconnect",
+                                    "error_type": type(exc).__name__,
+                                    "location": exception_location(exc),
+                                },
+                            )
                     finally:
                         if connection is not None:
                             connection.cancel()
                         try:
                             if connection is not None:
-                                with suppress(Exception, asyncio.CancelledError):
+                                try:
                                     # Only suppress the child's cancellation, not our own.
                                     await asyncio.shield(connection)
+                                except asyncio.CancelledError:
+                                    pass
+                                except Exception as exc:
+                                    self.sink.diagnostic(
+                                        "tiktok_cleanup_failed",
+                                        level="warning",
+                                        details={
+                                            "phase": "connection_task",
+                                            "error_type": type(exc).__name__,
+                                            "location": exception_location(exc),
+                                        },
+                                    )
                         finally:
                             try:
-                                with suppress(Exception):
+                                try:
                                     async with asyncio.timeout(5):
                                         await client.web.close()
+                                except Exception as exc:
+                                    self.sink.diagnostic(
+                                        "tiktok_cleanup_failed",
+                                        level="warning",
+                                        details={
+                                            "phase": "http_close",
+                                            "error_type": type(exc).__name__,
+                                            "location": exception_location(exc),
+                                        },
+                                    )
                             finally:
                                 client.remove_all_listeners()
             # Some upstream cleanup methods may consume cancellation themselves.
             if (task := asyncio.current_task()) is not None and task.cancelling():
                 raise asyncio.CancelledError
             logger.info("TikTok reconnect in %.1fs", self.delay)
+            self.sink.diagnostic("tiktok_retry_scheduled", details={"delay_seconds": self.delay})
             await asyncio.sleep(self.delay)
             self.delay = min(self.delay * 2, self.settings.tiktok_reconnect_max_seconds)

@@ -274,6 +274,22 @@ uv run python stress_pipeline.py --duration 8 --rate 500 --clients 2 --comment-s
 
 운영 이미지의 `scripts/test-container.sh`에는 별도 1MiB tmpfs를 실제로 채워 저장 실패를 확인하는 검사가 포함됩니다. 이 임시 컨테이너는 운영 volume을 mount하지 않습니다. 로컬 검증 시간과 실제 Pi/SD 장시간 검증은 구분해서 기록해야 합니다.
 
+HTTP 요청과 WS 재접속 부하는 서버·부하 생성기를 별도 프로세스로 실행하는 `profile_api.py`로 검사합니다. Uvicorn의 운영 기본 이벤트 루프와 `websockets-sansio`, 입력 프레임 1KiB 제한을 사용합니다. 기존 API를 실제 localhost TCP로 호출하며 source만 합성 댓글로 바꾸고 선물 이미지 하나를 미리 캐시에 넣습니다. TikTok·외부 CDN이나 운영 DB는 사용하지 않습니다.
+
+```bash
+uv run pytest -q tests/api/test_api_load.py tests/api/test_image_load.py tests/api/test_ws_load.py tests/api/test_profile_api.py
+uv run python profile_api.py --mode read --duration 10 --concurrency 64
+uv run python profile_api.py --mode mixed --duration 10 --concurrency 64
+uv run python profile_api.py --mode churn --duration 10 --concurrency 4 --reconnectors 32
+uv run python profile_api.py --mode churn --duration 8 --profile --directory /path/on/sd
+```
+
+`read`는 health·설정·warm 이미지 조회, `mixed`는 시작·종료·refresh·설정 변경을 섞고, `churn`은 HTTP 조회·댓글 전달에 반복 WS 연결·종료와 TCP abort를 겹칩니다. 동시 요청 수는 이전 응답 후 다음 요청을 보내는 closed-loop 방식입니다. 각 HTTP worker는 한 연결을 재사용하는 별도 풀을 갖습니다. 서버와 생성기 CPU를 모두 기록하므로 생성기가 포화된 수치를 서버 최대 처리량으로 해석하지 않습니다. `--profile`은 각 프로세스 메인 thread CPU와 실제 SQLite writer를 분리합니다. 프로파일은 부하를 추가하므로 처리량 비교는 끈 상태에서 합니다.
+
+HTTP 상태별 건수·오류·지연, health 503의 fault·source state·저장 상태, handshake 101/403, 기존 WS peer의 순서·수신·지연, DB 무결성·저장 누락·진단 종류와 종료 정리를 JSON으로 출력합니다. 변경 API의 409(상태 충돌)·503(요청 상한)과 WS admission 403은 별도로 집계하며 예상된 거부입니다. 조회 503은 검사를 실패시킵니다. mixed에서는 세션 경계에서 이전 표시 큐를 버리는 동작을 허용하되 SQLite에는 활성 sink가 접수한 댓글이 모두 저장돼야 합니다. mixed의 source는 전환마다 시작하므로 `--comment-rate`를 전체 실행의 고정 입력량으로 해석하지 않습니다.
+
+분위수는 마지막 10,000개 표본, 평균·최고 지연·상태 건수는 전체 요청을 사용합니다. health에서 관찰한 최고 pending/연결/저장 큐는 표본값이며 상한 보장은 직접 admission 테스트로 검사합니다. `--max-http-p99-ms` 기본 1초는 선택한 검사 기준입니다. 처리량·Pi 성능 보장이 아니며, 실패는 `checks`와 종료 코드 1로 드러납니다. Linux `/proc`와 상속 socket을 사용하며 임시 DB·제어 파일·서버 프로세스는 종료 후 정리합니다. CI는 4초·동시 요청 4개·댓글 100건/초의 짧은 회귀 검사만 실행합니다.
+
 로컬 정적 빌드를 FastAPI에서 확인하려면 `pnpm build` 이후 백엔드를 시작하고 `http://127.0.0.1:8000`을 엽니다. 빌드 폴더를 새로 만든 경우 백엔드를 재시작하세요.
 
 저장소 루트에서 운영 이미지 빌드:
@@ -291,7 +307,7 @@ Node 빌드 단계와 Python 의존성 단계를 분리하며 최종 이미지�
 | Workflow | 자동 실행 | 검사·발행 내용 |
 | --- | --- | --- |
 | [Frontend CI](https://github.com/Longcat2957/tiktok_live_monitor/actions/workflows/frontend-ci.yml) | `dev` 푸시, `dev` 대상 PR | lint, format:check, TypeScript/Svelte check, 단위 테스트, 정적 빌드, mock 브라우저 E2E |
-| [Backend CI](https://github.com/Longcat2957/tiktok_live_monitor/actions/workflows/backend-ci.yml) | `dev` 푸시, `dev` 대상 PR | pytest, mypy, Ruff, SQLite·TCP WebSocket 부하, 셸 문법, 업데이트·autostart 스크립트 테스트 |
+| [Backend CI](https://github.com/Longcat2957/tiktok_live_monitor/actions/workflows/backend-ci.yml) | `dev` 푸시, `dev` 대상 PR | pytest, mypy, Ruff, SQLite·HTTP·TCP WebSocket 부하, 셸 문법, 업데이트·autostart 스크립트 테스트 |
 | [Docker CI](https://github.com/Longcat2957/tiktok_live_monitor/actions/workflows/ci.yml) | `main` 푸시, `main` 대상 PR | AMD64/ARM64 이미지 빌드·컨테이너 실행 검증, `main` 푸시에서 Docker Hub 발행 |
 
 Frontend CI와 Backend CI는 독립적으로 실행합니다. 프론트엔드 E2E가 mock 백엔드를 직접 시작하므로 Frontend CI에도 백엔드 런타임 의존성을 설치합니다. `dev`의 두 CI가 모두 성공한 커밋을 `main`으로 반영하세요.

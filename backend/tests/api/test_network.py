@@ -110,7 +110,9 @@ async def running_monitor(monkeypatch):
     listener.bind(("127.0.0.1", 0))
     listener.setblocking(False)
     base = f"http://127.0.0.1:{listener.getsockname()[1]}"
-    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", ws="websockets-sansio"))
+    server = uvicorn.Server(
+        uvicorn.Config(app, log_level="warning", ws="websockets-sansio", ws_max_size=1024)
+    )
     serving = asyncio.create_task(server.serve(sockets=[listener]))
     try:
         await eventually(lambda: server.started)

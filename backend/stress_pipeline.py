@@ -37,6 +37,31 @@ SAMPLE_LIMIT = 10_000
 MIN_RATE_RATIO = 0.95
 
 
+def profile_summary(profiler) -> dict[str, object]:
+    import pstats
+
+    stats = pstats.Stats(profiler).stats
+    rows = []
+    for (filename, line, name), (primitive, calls, own, cumulative, _) in stats.items():
+        if "_lsprof.Profile" in name or (
+            filename == "~" and ("'poll'" in name or "'select'" in name)
+        ):
+            continue
+        rows.append(
+            {
+                "function": f"{filename}:{line}:{name}",
+                "self_seconds": round(own, 6),
+                "cumulative_seconds": round(cumulative, 6),
+                "calls": calls,
+                "primitive_calls": primitive,
+            }
+        )
+    return {
+        "total_self_seconds": round(sum(value[2] for value in stats.values()), 6),
+        "top_self_functions": sorted(rows, key=lambda row: row["self_seconds"], reverse=True)[:20],
+    }
+
+
 class PipelineProfile:
     """Opt-in, per-thread profiling; no per-event trace or unbounded timing history."""
 
@@ -75,30 +100,6 @@ class PipelineProfile:
     def report(self) -> dict[str, object]:
         import pstats
 
-        def summary(profiler) -> dict[str, object]:
-            stats = pstats.Stats(profiler).stats
-            rows = []
-            for (filename, line, name), (primitive, calls, own, cumulative, _) in stats.items():
-                if "_lsprof.Profile" in name or (
-                    filename == "~" and ("'poll'" in name or "'select'" in name)
-                ):
-                    continue
-                rows.append(
-                    {
-                        "function": f"{filename}:{line}:{name}",
-                        "self_seconds": round(own, 6),
-                        "cumulative_seconds": round(cumulative, 6),
-                        "calls": calls,
-                        "primitive_calls": primitive,
-                    }
-                )
-            return {
-                "total_self_seconds": round(sum(value[2] for value in stats.values()), 6),
-                "top_self_functions": sorted(
-                    rows, key=lambda row: row["self_seconds"], reverse=True
-                )[:20],
-            }
-
         writer_stats = pstats.Stats(self.writer).stats
         sql_wall = {}
         for method in ("executemany", "__exit__"):
@@ -117,13 +118,13 @@ class PipelineProfile:
                 "timer": "thread_time_cpu",
                 "scope": "source generation window; main asyncio thread includes backend, "
                 "synthetic driver, localhost receiving clients and metrics; excludes writer thread",
-                **summary(self.main),
+                **profile_summary(self.main),
             },
             "writer": {
                 "timer": "wall",
                 "scope": "actual Archive._write batches across app lifecycle; __exit__ includes "
                 "commit or rollback; wall includes I/O, GIL and scheduling waits",
-                **summary(self.writer),
+                **profile_summary(self.writer),
                 "sql_self_wall_seconds": sql_wall,
                 "batches": self.batches,
                 "attempted_records": self.records,

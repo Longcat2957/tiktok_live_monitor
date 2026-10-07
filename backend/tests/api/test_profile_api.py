@@ -31,7 +31,12 @@ def test_profile_api_cli_flushes_and_removes_temporary_files(tmp_path: Path, mod
             "--directory",
             str(tmp_path),
             "--profile",
-        ],
+        ]
+        + (
+            ["--server-python", sys.executable, "--sample-limit", "500"]
+            if mode == "mixed-churn"
+            else []
+        ),
         cwd=backend,
         capture_output=True,
         text=True,
@@ -40,6 +45,10 @@ def test_profile_api_cli_flushes_and_removes_temporary_files(tmp_path: Path, mod
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     result = json.loads(completed.stdout)
+    assert result["driver_runtime"]["python"] == sys.version.split()[0]
+    assert result["server"]["runtime"] == result["driver_runtime"]
+    assert result["sample_limit"] == (500 if mode == "mixed-churn" else 10_000)
+    assert result["websocket_retained_samples"] <= result["sample_limit"]
     assert result["ok"] and result["checks"] and all(result["checks"].values()), result
     generated = result["server"]["generated"]
     assert generated > 0

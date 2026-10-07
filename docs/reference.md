@@ -292,7 +292,9 @@ Python 3.14의 `cProfile`은 스레드 간 측정이 섞이고 동시 profiler�
 
 HTTP 상태별 건수·오류·지연, health 503의 fault·source state·저장 상태, handshake 101/403, 기존 WS peer의 순서·수신·지연, DB 무결성·저장 누락·진단 종류와 종료 정리를 JSON으로 출력합니다. 변경 API의 409(상태 충돌)·503(요청 상한)과 WS admission 403은 별도로 집계하며 예상된 거부입니다. 조회 503은 검사를 실패시킵니다. `mixed`와 `mixed-churn`에서는 세션 경계에서 이전 표시 큐를 버리는 동작을 허용하되 SQLite에는 활성 sink가 접수한 댓글이 모두 저장돼야 합니다. source는 전환마다 시작하므로 이 두 모드의 `--comment-rate`를 전체 실행의 고정 입력량으로 해석하지 않습니다.
 
-분위수는 마지막 10,000개 표본, 평균·최고 지연·상태 건수는 전체 요청을 사용합니다. health에서 관찰한 최고 pending/연결/저장 큐는 표본값이며 상한 보장은 직접 admission 테스트로 검사합니다. `--max-http-p99-ms` 기본 1초는 선택한 검사 기준입니다. 처리량·Pi 성능 보장이 아니며, 실패는 `checks`와 종료 코드 1로 드러납니다. Linux `/proc`와 상속 socket을 사용하며 임시 DB·제어 파일·서버 프로세스는 종료 후 정리합니다. CI는 4초·동시 요청 4개·댓글 100건/초의 짧은 회귀 검사만 실행합니다.
+분위수는 기본으로 마지막 10,000개 표본, 평균·최고 HTTP 지연·상태 건수는 전체 요청을 사용합니다. `--sample-limit`으로 표본 상한을 최대 1,000,000개까지 늘릴 수 있습니다. HTTP·handshake의 `retained_samples`와 WS의 `websocket_retained_samples`를 전체 관측 수와 비교하면 분위수가 전체 실행을 담는지 확인할 수 있습니다. health에서 관찰한 최고 pending/연결/저장 큐는 표본값이며 상한 보장은 직접 admission 테스트로 검사합니다. `--max-http-p99-ms` 기본 1초는 선택한 검사 기준입니다. 처리량·Pi 성능 보장이 아니며, 실패는 `checks`와 종료 코드 1로 드러납니다. Linux `/proc`와 상속 socket을 사용하며 임시 DB·제어 파일·서버 프로세스는 종료 후 정리합니다. CI는 4초·동시 요청 4개·댓글 100건/초의 짧은 회귀 검사만 실행합니다.
+
+`--server-python /path/to/venv/bin/python`으로 부하 생성기의 Python은 고정하고 서버 실행기만 바꿀 수 있습니다. 결과의 `driver_runtime`과 `server.runtime`에는 실제 Python 실행 경로·버전과 SQLite 버전이 남습니다. 버전 비교에서는 두 실행기가 읽는 소스와 패키지 버전도 같아야 합니다. 현재 앱에는 3.14 문법이 있으므로 3.11 비교에는 문법·annotation만 호환시킨 동일한 별도 checkout을 두 서버 모두 사용합니다.
 
 로컬 정적 빌드를 FastAPI에서 확인하려면 `pnpm build` 이후 백엔드를 시작하고 `http://127.0.0.1:8000`을 엽니다. 빌드 폴더를 새로 만든 경우 백엔드를 재시작하세요.
 

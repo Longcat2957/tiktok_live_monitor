@@ -37,6 +37,14 @@ from stress_pipeline import PipelineProfile, ThreadProfile, profile_summary
 SAMPLES = 10_000
 
 
+def runtime_info() -> dict:
+    return {
+        "python": sys.version.split()[0],
+        "executable": sys.executable,
+        "sqlite": sqlite3.sqlite_version,
+    }
+
+
 def write_json(path: Path, value: dict) -> None:
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(value))
@@ -180,6 +188,7 @@ async def serve(args) -> None:
                 db.execute("SELECT event, COUNT(*) FROM diagnostics GROUP BY event")
             )
         summary = {
+            "runtime": runtime_info(),
             "generated": generated,
             "ignored_late_events": ignored,
             "sqlite_comments": rows,
@@ -251,7 +260,7 @@ async def run_load(args) -> dict:
         listener.listen(128)
         base = f"http://127.0.0.1:{listener.getsockname()[1]}"
         command = [
-            sys.executable,
+            str(args.server_python.absolute()) if args.server_python else sys.executable,
             str(Path(__file__).resolve()),
             "--serve",
             "--fd",
@@ -557,6 +566,7 @@ async def run_load(args) -> dict:
                 ),
             }
             result = {
+                "driver_runtime": runtime_info(),
                 "ok": all(checks.values()),
                 "checks": checks,
                 "mode": args.mode,
@@ -576,6 +586,7 @@ async def run_load(args) -> dict:
                 "websocket_latency_ms": {
                     f"p{p}": percentile_ms(list(ws_latencies), p) for p in (50, 95, 99)
                 },
+                "websocket_retained_samples": len(ws_latencies),
                 "server_cpu_seconds": round(cpu_after - cpu_before, 3),
                 "server_cpu_percent_one_core": round((cpu_after - cpu_before) / elapsed * 100, 2),
                 "driver_cpu_percent_one_core": round(
@@ -585,7 +596,7 @@ async def run_load(args) -> dict:
                 "sample_limit": SAMPLES,
                 "interpretation": "closed-loop HTTP concurrency; latency includes client/network; "
                 "peaks are sampled health observations, hard caps verified by admission tests; "
-                "WS latency uses same-host UTC clocks; sample quantiles retain last10000; "
+                f"WS latency uses same-host UTC clocks; sample quantiles retain last{SAMPLES}; "
                 "mixed-session boundaries intentionally discard queued old-session display events",
             }
             if driver_profile:
@@ -598,6 +609,7 @@ async def run_load(args) -> dict:
 
 
 def main() -> None:
+    global SAMPLES
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("read", "mixed", "churn", "mixed-churn"), default="read")
     parser.add_argument("--duration", type=float, default=10)
@@ -607,7 +619,13 @@ def main() -> None:
     parser.add_argument("--comment-rate", type=float, default=500)
     parser.add_argument("--comment-size", type=int, default=1000)
     parser.add_argument("--max-http-p99-ms", type=float, default=1000)
+    parser.add_argument("--sample-limit", type=int, default=SAMPLES)
     parser.add_argument("--directory", type=Path)
+    parser.add_argument(
+        "--server-python",
+        type=Path,
+        help="Server interpreter; defaults to the driver's interpreter",
+    )
     parser.add_argument("--profile", action="store_true")
     parser.add_argument("--serve", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--fd", type=int, help=argparse.SUPPRESS)
@@ -629,6 +647,9 @@ def main() -> None:
         parser.error("concurrency/reconnectors must be1..256 and clients1..16")
     if not 1 <= args.comment_size <= 10_000:
         parser.error("comment-size must be1..10000")
+    if not 1 <= args.sample_limit <= 1_000_000:
+        parser.error("sample-limit must be1..1000000")
+    SAMPLES = args.sample_limit
     if args.serve:
         if args.fd is None or args.state_dir is None:
             parser.error("Internal server mode needs fd and state-dir")

@@ -264,6 +264,14 @@ Pi의 SD 저장장치에서 한 시간 이상 확인하려면 같은 runner를 �
 uv run python stress_pipeline.py --duration 3600 --rate 100 --clients 2 --comment-size 10000 --directory /path/on/sd
 ```
 
+병목의 함수별 비용은 `--profile`로 확인합니다. 다른 부하 검사를 동시에 실행하지 않고 같은 시간·댓글 크기에서 연결 수나 목표 입력량을 하나씩 바꿉니다.
+
+```bash
+uv run python stress_pipeline.py --duration 8 --rate 500 --clients 2 --comment-size 1000 --profile
+```
+
+메인 스레드는 댓글 생성 구간의 thread CPU, SQLite writer는 실제 batch 쓰기의 wall time과 thread CPU를 따로 기록합니다. writer의 `executemany`와 transaction 종료 시간으로 SQL 실행·commit 비용을 확인합니다. wall time과 CPU의 차이는 I/O·GIL·OS 스케줄링 대기를 합친 값이며 디스크 대기만 의미하지 않습니다. 메인 프로파일에는 같은 프로세스의 합성 source·수신 클라이언트·계측 비용도 포함됩니다. 실제 처리량·지연은 `--profile`을 끈 실행으로 판단하고, 프로파일 결과의 큰 함수 시간을 바로 운영 병목으로 단정하지 않습니다.
+
 운영 이미지의 `scripts/test-container.sh`에는 별도 1MiB tmpfs를 실제로 채워 저장 실패를 확인하는 검사가 포함됩니다. 이 임시 컨테이너는 운영 volume을 mount하지 않습니다. 로컬 검증 시간과 실제 Pi/SD 장시간 검증은 구분해서 기록해야 합니다.
 
 로컬 정적 빌드를 FastAPI에서 확인하려면 `pnpm build` 이후 백엔드를 시작하고 `http://127.0.0.1:8000`을 엽니다. 빌드 폴더를 새로 만든 경우 백엔드를 재시작하세요.

@@ -123,7 +123,10 @@ async def test_sigkill_preserves_committed_wal_prefix_and_resumes(tmp_path: Path
         ]
 
 
-async def test_sustained_runner_flushes_real_sqlite_and_websocket_clients(tmp_path: Path) -> None:
+@pytest.mark.parametrize("profile", [False, True])
+async def test_sustained_runner_flushes_real_sqlite_and_websocket_clients(
+    tmp_path: Path, profile: bool
+) -> None:
     result = await run_soak(
         duration=0.2,
         rate=100,
@@ -132,10 +135,24 @@ async def test_sustained_runner_flushes_real_sqlite_and_websocket_clients(tmp_pa
         max_p99_ms=5000,
         max_latency_ms=5000,
         directory=tmp_path,
+        profile=profile,
     )
     assert result["ok"], result
     assert result["sqlite_comments"] == result["generated"]
     assert not list(tmp_path.iterdir())
+    assert ("profile" in result) is profile
+    if profile:
+        measured = result["profile"]
+        assert measured["main"]["timer"] == "thread_time_cpu"
+        assert measured["writer"]["timer"] == "wall"
+        writer = measured["writer"]
+        assert (
+            writer["attempted_records"] == result["sqlite_comments"] + result["sqlite_diagnostics"]
+        )
+        assert writer["sql_self_wall_seconds"]["executemany"]["calls"] == writer["batches"] * 2
+        assert writer["sql_self_wall_seconds"]["__exit__"]["calls"] == writer["batches"]
+        assert writer["total_write_thread_cpu_seconds"] > 0
+        assert len(measured["main"]["top_self_functions"]) <= 20
 
 
 if __name__ == "__main__":

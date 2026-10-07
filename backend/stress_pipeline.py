@@ -15,6 +15,7 @@ import socket
 import sqlite3
 import sys
 import threading
+import time
 from collections import deque
 from contextlib import AsyncExitStack, closing
 from pathlib import Path
@@ -28,12 +29,121 @@ from websockets.asyncio.client import connect
 from app.config import Settings
 from app.main import create_app
 from app.schemas.events import Comment, User
-from app.services.archive import BATCH_SIZE, CAPACITY
+from app.services.archive import BATCH_SIZE, CAPACITY, Archive
 from app.services.event_sink import EventSink
 from profile_pipeline import percentile_ms
 
 SAMPLE_LIMIT = 10_000
 MIN_RATE_RATIO = 0.95
+
+
+class PipelineProfile:
+    """Opt-in, per-thread profiling; no per-event trace or unbounded timing history."""
+
+    def __init__(self) -> None:
+        import cProfile
+
+        self.main = cProfile.Profile(timer=time.thread_time)
+        self.writer = cProfile.Profile()  # Wall timer, enabled only in the SQLite worker.
+        self.batch_wall_ns: deque[int] = deque(maxlen=SAMPLE_LIMIT)
+        self.batches = 0
+        self.records = 0
+        self.failures = 0
+        self.writer_wall_ns = 0
+        self.writer_cpu_seconds = 0.0
+        self.max_batch_wall_ns = 0
+
+    def write(self, original, batch):
+        wall_started = time.perf_counter_ns()
+        cpu_started = time.thread_time()
+        self.writer.enable()
+        try:
+            return original(batch)
+        except BaseException:
+            self.failures += 1
+            raise
+        finally:
+            self.writer.disable()
+            wall = time.perf_counter_ns() - wall_started
+            self.writer_cpu_seconds += time.thread_time() - cpu_started
+            self.writer_wall_ns += wall
+            self.batches += 1
+            self.records += len(batch)
+            self.max_batch_wall_ns = max(self.max_batch_wall_ns, wall)
+            self.batch_wall_ns.append(wall)
+
+    def report(self) -> dict[str, object]:
+        import pstats
+
+        def summary(profiler) -> dict[str, object]:
+            stats = pstats.Stats(profiler).stats
+            rows = []
+            for (filename, line, name), (primitive, calls, own, cumulative, _) in stats.items():
+                if "_lsprof.Profile" in name or (
+                    filename == "~" and ("'poll'" in name or "'select'" in name)
+                ):
+                    continue
+                rows.append(
+                    {
+                        "function": f"{filename}:{line}:{name}",
+                        "self_seconds": round(own, 6),
+                        "cumulative_seconds": round(cumulative, 6),
+                        "calls": calls,
+                        "primitive_calls": primitive,
+                    }
+                )
+            return {
+                "total_self_seconds": round(sum(value[2] for value in stats.values()), 6),
+                "top_self_functions": sorted(
+                    rows, key=lambda row: row["self_seconds"], reverse=True
+                )[:20],
+            }
+
+        writer_stats = pstats.Stats(self.writer).stats
+        sql_wall = {}
+        for method in ("executemany", "__exit__"):
+            matches = [
+                value
+                for (_, _, name), value in writer_stats.items()
+                if "sqlite3.Connection" in name and f"'{method}'" in name
+            ]
+            sql_wall[method] = {
+                "calls": sum(value[1] for value in matches),
+                "self_wall_seconds": round(sum(value[2] for value in matches), 6),
+            }
+        wall_seconds = self.writer_wall_ns / 1_000_000_000
+        return {
+            "main": {
+                "timer": "thread_time_cpu",
+                "scope": "source generation window; main asyncio thread includes backend, "
+                "synthetic driver, localhost receiving clients and metrics; excludes writer thread",
+                **summary(self.main),
+            },
+            "writer": {
+                "timer": "wall",
+                "scope": "actual Archive._write batches across app lifecycle; __exit__ includes "
+                "commit or rollback; wall includes I/O, GIL and scheduling waits",
+                **summary(self.writer),
+                "sql_self_wall_seconds": sql_wall,
+                "batches": self.batches,
+                "attempted_records": self.records,
+                "failed_batches": self.failures,
+                "total_write_wall_seconds": round(wall_seconds, 6),
+                "total_write_thread_cpu_seconds": round(self.writer_cpu_seconds, 6),
+                "records_per_active_write_wall_second": round(self.records / wall_seconds, 3)
+                if wall_seconds
+                else None,
+                "batch_wall_ms": {
+                    f"p{percent}": percentile_ms(list(self.batch_wall_ns), percent)
+                    for percent in (50, 95, 99)
+                },
+                "max_batch_wall_ms": round(self.max_batch_wall_ns / 1_000_000, 3),
+                "retained_batch_samples": len(self.batch_wall_ns),
+                "batch_sample_limit": SAMPLE_LIMIT,
+            },
+            "interpretation": "function times are self seconds; cumulative times and async "
+            "call/resume counts are not event latency or comment counts; profiling adds overhead",
+        }
 
 
 def rss_bytes() -> int:
@@ -54,7 +164,9 @@ async def run_soak(
     max_p99_ms: float | None = None,
     max_latency_ms: float | None = None,
     directory: Path | None = None,
+    profile: bool = False,
 ) -> dict[str, object]:
+    profiler = PipelineProfile() if profile else None
     loop = asyncio.get_running_loop()
     baseline_tasks = asyncio.all_tasks()
     timestamps: list[tuple[int, float] | None] = [None] * SAMPLE_LIMIT
@@ -83,16 +195,22 @@ async def run_soak(
             user = User(nickname="Soak", unique_id="soak")
             body = "x" * comment_size
             started = loop.time()
-            while loop.time() < started + duration:
-                await asyncio.sleep(max(0, started + generated / rate - loop.time()))
-                if loop.time() >= started + duration:
-                    break
-                timestamps[generated % SAMPLE_LIMIT] = (generated, loop.time())
-                self.sink.publish(Comment(id=f"soak-{generated}", user=user, comment=body))
-                generated += 1
-                peaks["source"] = max(peaks["source"], self.sink.queue.qsize())
-                assert self.sink.archive is not None
-                peaks["archive"] = max(peaks["archive"], self.sink.archive.get_health().queued)
+            if profiler is not None:
+                profiler.main.enable()
+            try:
+                while loop.time() < started + duration:
+                    await asyncio.sleep(max(0, started + generated / rate - loop.time()))
+                    if loop.time() >= started + duration:
+                        break
+                    timestamps[generated % SAMPLE_LIMIT] = (generated, loop.time())
+                    self.sink.publish(Comment(id=f"soak-{generated}", user=user, comment=body))
+                    generated += 1
+                    peaks["source"] = max(peaks["source"], self.sink.queue.qsize())
+                    assert self.sink.archive is not None
+                    peaks["archive"] = max(peaks["archive"], self.sink.archive.get_health().queued)
+            finally:
+                if profiler is not None:
+                    profiler.main.disable()
             source_elapsed = loop.time() - started
             source_finished.set()
             await asyncio.Event().wait()  # Stay alive until the normal monitor stop command.
@@ -131,6 +249,15 @@ async def run_soak(
                 app, log_level="error", ws="websockets-sansio", timeout_graceful_shutdown=20
             )
         )
+        archive_patch = None
+        if profiler is not None:
+
+            class ProfiledArchive(Archive):
+                def _write(self, batch):
+                    return profiler.write(super()._write, batch)
+
+            archive_patch = patch("app.services.monitor.Archive", new=ProfiledArchive)
+            archive_patch.start()
         serving = asyncio.create_task(server.serve(sockets=[listener]), name="soak-server")
         receivers: list[asyncio.Task[None]] = []
         sampler: asyncio.Task[None] | None = None
@@ -194,7 +321,10 @@ async def run_soak(
                         for index, connection in enumerate(connections)
                     ]
                     async with httpx.AsyncClient(
-                        base_url=base, headers={"Origin": base}, timeout=15
+                        base_url=base,
+                        headers={"Origin": base},
+                        timeout=15,
+                        limits=httpx.Limits(max_keepalive_connections=0),
                     ) as client:
                         response = await client.post(
                             "/account",
@@ -228,6 +358,8 @@ async def run_soak(
                 await asyncio.wait_for(serving, 25)
             finally:
                 listener.close()
+                if archive_patch is not None:
+                    archive_patch.stop()
 
         storage = monitor.archive.get_health()
         with closing(sqlite3.connect(archive_path.as_uri() + "?mode=ro", uri=True)) as database:
@@ -325,6 +457,8 @@ async def run_soak(
             },
             "leftover_tasks": leftovers,
         }
+        if profiler is not None:
+            result["profile"] = profiler.report()
     result["temporary_directory_removed"] = not temporary_path.exists()
     result["ok"] = result["ok"] and result["temporary_directory_removed"]
     return result
@@ -337,6 +471,11 @@ def main() -> None:
     )
     parser.add_argument("--rate", type=float, default=100, help="synthetic comments per second")
     parser.add_argument("--clients", type=int, default=2)
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="report main CPU and actual SQLite writer wall profiles",
+    )
     parser.add_argument(
         "--max-rss-growth-mb",
         type=float,
@@ -383,6 +522,7 @@ def main() -> None:
             max_p99_ms=args.max_p99_ms,
             max_latency_ms=args.max_latency_ms,
             directory=args.directory,
+            profile=args.profile,
         )
     )
     print(json.dumps(result))

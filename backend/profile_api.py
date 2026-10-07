@@ -6,7 +6,6 @@ Only a temporary localhost server, synthetic comments and an offline cached imag
 
 import argparse
 import asyncio
-import cProfile
 import json
 import math
 import os
@@ -33,7 +32,7 @@ from app.schemas.events import Comment, User
 from app.services.archive import Archive
 from app.services.gift_images import CachedImage
 from profile_pipeline import percentile_ms
-from stress_pipeline import PipelineProfile, profile_summary
+from stress_pipeline import PipelineProfile, ThreadProfile, profile_summary
 
 SAMPLES = 10_000
 
@@ -239,7 +238,7 @@ async def run_load(args) -> dict:
     handshake = Metric()
     health_failures: Counter = Counter()
     receiver_errors: Counter = Counter()
-    driver_profile = cProfile.Profile(timer=time.thread_time) if args.profile else None
+    driver_profile = ThreadProfile(timer=time.thread_time) if args.profile else None
     peer_stats = [dict(received=0, last=-1, in_order=True, gaps=0) for _ in range(args.clients)]
     ws_latencies: deque[int] = deque(maxlen=SAMPLES)
     peaks = dict(pending_commands=0, websocket_connections=0, storage_queued=0, rss_bytes=0)

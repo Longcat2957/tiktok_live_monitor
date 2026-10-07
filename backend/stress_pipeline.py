@@ -19,7 +19,9 @@ import time
 from collections import deque
 from contextlib import AsyncExitStack, closing
 from pathlib import Path
+from profile import Profile
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
@@ -37,15 +39,70 @@ SAMPLE_LIMIT = 10_000
 MIN_RATE_RATIO = 0.95
 
 
+class ThreadProfile(Profile):
+    """Thread-local stdlib profiler; cProfile 3.14 monitors all threads together."""
+
+    def enable(self) -> None:
+        if getattr(self, "_enabled", False):
+            return
+        self._previous_profile = sys.getprofile()
+        # Profiling begins inside an active coroutine, so seed its existing stack.
+        frames = []
+        frame = sys._getframe()
+        while frame is not None:
+            frames.append(frame)
+            frame = frame.f_back
+        for frame in reversed(frames):
+            self.trace_dispatch_call(frame, 0)
+        self.t = self.get_time()
+        self._enabled = True
+        sys.setprofile(self._dispatch)
+
+    def _dispatch(self, frame, event, arg) -> None:
+        parent = frame.f_back if event == "call" else frame
+        if self.cur[-2] is not parent:
+            # C event loops can resume a coroutine without call events for its parents.
+            frames = []
+            while parent is not None:
+                frames.append(parent)
+                parent = parent.f_back
+            while self.cur[-1] and self.cur[-2] not in frames:
+                self.trace_dispatch_return(self.cur[-2], self.get_time() - self.t)
+                self.t = self.get_time()
+            missing = []
+            for parent in frames:
+                if parent is self.cur[-2]:
+                    break
+                missing.append(parent)
+            for parent in reversed(missing):
+                self.trace_dispatch_call(parent, 0)
+        if event == "c_call" and isinstance(getattr(arg, "__self__", None), sqlite3.Connection):
+            arg = SimpleNamespace(
+                __name__=f"<method '{arg.__name__}' of 'sqlite3.Connection' objects>"
+            )
+        self.dispatcher(frame, event, arg)
+
+    def disable(self) -> None:
+        if not getattr(self, "_enabled", False):
+            return
+        sys.setprofile(self._previous_profile)
+        self._enabled = False
+        self.simulate_cmd_complete()
+
+    def create_stats(self) -> None:
+        # Frames were finalized on their own thread; reporting must not read its clock.
+        self.snapshot_stats()
+
+
 def profile_summary(profiler) -> dict[str, object]:
     import pstats
 
     stats = pstats.Stats(profiler).stats
     rows = []
     for (filename, line, name), (primitive, calls, own, cumulative, _) in stats.items():
-        if "_lsprof.Profile" in name or (
-            filename == "~" and ("'poll'" in name or "'select'" in name)
-        ):
+        if filename == "" and name in {"poll", "select"}:
+            continue
+        if filename == __file__ and name in {"enable", "disable", "_dispatch"}:
             continue
         rows.append(
             {
@@ -57,6 +114,7 @@ def profile_summary(profiler) -> dict[str, object]:
             }
         )
     return {
+        "backend": "stdlib_profile_thread_local",
         "total_self_seconds": round(sum(value[2] for value in stats.values()), 6),
         "top_self_functions": sorted(rows, key=lambda row: row["self_seconds"], reverse=True)[:20],
     }
@@ -66,10 +124,8 @@ class PipelineProfile:
     """Opt-in, per-thread profiling; no per-event trace or unbounded timing history."""
 
     def __init__(self) -> None:
-        import cProfile
-
-        self.main = cProfile.Profile(timer=time.thread_time)
-        self.writer = cProfile.Profile()  # Wall timer, enabled only in the SQLite worker.
+        self.main = ThreadProfile(timer=time.thread_time)
+        self.writer: ThreadProfile | None = None
         self.batch_wall_ns: deque[int] = deque(maxlen=SAMPLE_LIMIT)
         self.batches = 0
         self.records = 0
@@ -79,6 +135,8 @@ class PipelineProfile:
         self.max_batch_wall_ns = 0
 
     def write(self, original, batch):
+        if self.writer is None:
+            self.writer = ThreadProfile(timer=time.perf_counter)
         wall_started = time.perf_counter_ns()
         cpu_started = time.thread_time()
         self.writer.enable()
@@ -100,6 +158,7 @@ class PipelineProfile:
     def report(self) -> dict[str, object]:
         import pstats
 
+        assert self.writer is not None
         writer_stats = pstats.Stats(self.writer).stats
         sql_wall = {}
         for method in ("executemany", "__exit__"):
@@ -126,6 +185,9 @@ class PipelineProfile:
                 "commit or rollback; wall includes I/O, GIL and scheduling waits",
                 **profile_summary(self.writer),
                 "sql_self_wall_seconds": sql_wall,
+                "sql_callback_coverage": "sys.setprofile omits implicit __exit__ calls on "
+                "exception-driven rollback; that time remains in the enclosing _write and "
+                "total batch wall/CPU measurements",
                 "batches": self.batches,
                 "attempted_records": self.records,
                 "failed_batches": self.failures,
@@ -143,7 +205,8 @@ class PipelineProfile:
                 "batch_sample_limit": SAMPLE_LIMIT,
             },
             "interpretation": "function times are self seconds; cumulative times and async "
-            "call/resume counts are not event latency or comment counts; profiling adds overhead",
+            "call/resume counts are not event latency or comment counts; stdlib profile uses "
+            "thread-local Python hooks and adds overhead",
         }
 
 

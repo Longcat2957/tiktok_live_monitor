@@ -17,7 +17,7 @@ class RuntimeSettings(BaseModel):
     mock_interval_seconds: float = Field(default=1.5, gt=0, le=3600)
 
     @model_validator(mode="after")
-    def validate_source(self) -> "RuntimeSettings":
+    def validate_source(self) -> RuntimeSettings:
         if self.tiktok_reconnect_max_seconds < self.tiktok_reconnect_min_seconds:
             raise ValueError("재연결 최대 간격은 최소 간격 이상이어야 합니다")
         return self

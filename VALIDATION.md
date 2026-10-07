@@ -2,6 +2,20 @@
 
 완료된 백엔드 안정화와 프론트엔드 개선 작업의 검증 기록을 모았다. 아래 결과는 당시 실행 결과이며 현재 커밋에서 재실행한 결과가 아니다. 검사 명령은 [개발 환경 설치 가이드](docs/installation-dev.md#5-검사와-빌드)를 따른다.
 
+## uv 기반 Python 3.14 전환 (2026-10-07)
+
+- `uv python install 3.14 --no-bin`, `uv python pin 3.14`, `uv sync --locked --managed-python`으로 개발 환경을 전환했다. 실제 실행기는 uv 관리 CPython **3.14.7**, SQLite **3.53.1**이다. `.python-version`, Python 최소 요구 버전, mypy·Ruff 대상, backend/frontend CI, Docker와 설치 문서를 3.14로 맞췄다. lockfile의 패키지 이름·버전 집합은 그대로이며 이전 Python용 wheel 메타데이터만 줄었다.
+- Python 3.14의 `cProfile`은 메인과 writer의 동시 활성화에서 `tool 2 is already in use`로 실패하고 다른 스레드까지 수집했다. 프로파일링 도구를 스레드별 표준 라이브러리 `profile` hook으로 바꿨다. uvloop의 coroutine 재개, 실제 SQLite 쓰기·예외·hook 복원과 스레드별 함수 분리를 검사했다. 새 backend는 `stdlib_profile_thread_local`이며 비용이 커서 아래 3.11 `cProfile` 수치와 직접 비교하지 않는다. 예외 rollback의 일부 C-call 누락은 출력에 명시하고, 전체 batch wall/CPU·시도·실패 집계는 유지한다.
+- Backend pytest **119개**, mypy **31개 파일**, Ruff check·format·lock 검사 통과. Frontend lint·format:check·check(오류·경고 0개), 단위 테스트 **45개**, 정적 build, 전체 Chromium E2E **34개**도 통과했다. 업데이트·자동 실행 스크립트 검사와 셸 문법 검사도 통과했다.
+- 공식 `python:3.14-slim-bookworm`의 AMD64·ARM64/v8 manifest를 확인하고 AMD64 운영 컨테이너 smoke를 실행했다. 실제 Python 3.14 실행을 assert하며 non-root·read-only·localhost, HTTP·정적 화면·mock WS, SQLite 최초 생성·종료 flush·컨테이너 교체·외부 backup, 실제 `SQLITE_FULL`·health 오류·기존 commit 보존을 모두 통과했다. ARM64 실제 실행과 Pi 하드웨어는 이 로컬 검사에 포함하지 않았다.
+- Python **3.11.16**에서 동일한 archive v1 스키마로 댓글·진단을 기록한 임시 파일을 **3.14.7**의 `Archive`로 열었다. 새 댓글 저장 후 기존 댓글·진단과 수신 순서, schema version 1·무결성을 확인했고 SQLite backup의 내용도 동일했다. 운영 DB는 사용하지 않았다.
+
+**60초 실제 TCP 복합 부하:** profiler 없이 `mixed-churn`, HTTP worker **64개**, 유지 WS **8개**, 재접속 worker **32개**, 세션별 댓글 **500건/초·1,000자**로 실행했다. DB는 NVMe/Btrfs 프로젝트 디렉터리에 임시로 만들고 서버·생성기는 별도 프로세스에서 실행했다. 종료 요청 완료를 포함한 창은 **61.020초**, HTTP **86,914건·1,424.34 RPS**, endpoint별 최고 p99 **93.844ms**, 서버/생성기 CPU **59.41/86.17%**였다. 변경 명령의 세션 충돌·상한 거부는 예상된 응답으로 별도 집계했고, 예상 밖 HTTP/handshake/receiver 오류와 health 503은 0건이었다.
+
+수락 댓글 **17,658개**와 진단 **17,723개**가 모두 저장됐고 DB 무결성·댓글 ID 순서·연속성·누락 0개·종료 queue 0개를 확인했다. 유지 peer는 각각 **17,597개**를 수신했으며 순서 정상·세션 내 gap 0개였다. 수신 검사 종료·세션 경계에서 전체 화면 수신 수와 최종 저장 수를 같게 요구하지 않는다. WS p99는 **41.348ms**, handshake는 101 **5,631건**·상한 거부 403 **3,521건**이었다. pending 명령/WS 연결 최고 표본은 16/16개, 저장 대기 최고 표본은 121개였다. 소스 누락·느린 peer 종료·worker 복구·fault 없이 모든 runner 검사와 종료 정리·임시 디렉터리 삭제를 통과했다. 이 한 회차는 호환성 검증이며 기존 3.11 대비 성능 향상을 증명하는 비교 실험은 아니다.
+
+같은 복합 조건의 **8초 `--profile`** 검사도 댓글 **1,285개**, 진단 **715개** 저장과 peer별 **1,285개** 순서 전달, main/writer/driver 프로파일·정상 종료를 통과했다. Python hook 비용 때문에 `--max-http-p99-ms 5000`을 명시했고 최고 HTTP p99는 **1,377.636ms**, WS p99는 **339.503ms**였다. 이는 위 일반 실행의 응답 성능과 구분한다. 원본 결과는 `/tmp/tiktok-python314-validation/mixed-churn-60s.json`, `mixed-churn-profile.json`에 있다.
+
 ## API/WS 병목 수정 적용과 TCP 전후 비교 (2026-10-07)
 
 다음 네 가지를 현재 소스에 적용했다. 아래 이전 조사에서 후보로 남겼던 SQLite 배치 수집과 전환 중 health 판정도 이번에 반영했다.

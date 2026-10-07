@@ -8,14 +8,14 @@ COPY frontend/ ./
 RUN pnpm build
 
 FROM ghcr.io/astral-sh/uv:0.12.8 AS uv
-FROM python:3.11-slim-bookworm AS dependencies
+FROM python:3.14-slim-bookworm AS dependencies
 COPY --from=uv /uv /usr/local/bin/uv
 ENV UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app/backend
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project --no-cache
 
-FROM python:3.11-slim-bookworm AS runtime
+FROM python:3.14-slim-bookworm AS runtime
 LABEL org.opencontainers.image.title="tiktok-live-monitor"
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PATH="/app/backend/.venv/bin:$PATH" \
     STATIC_DIR=/app/frontend/build HOST=0.0.0.0 PORT=8000 ARCHIVE_PATH=/data/monitor.sqlite3

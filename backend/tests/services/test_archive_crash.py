@@ -8,6 +8,7 @@ import signal
 import sqlite3
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 from threading import Event
@@ -16,7 +17,7 @@ import pytest
 
 from app.schemas.events import Comment, Status, User
 from app.services.archive import BATCH_SIZE, Archive, Record
-from stress_pipeline import run_soak
+from stress_pipeline import PipelineProfile, run_soak
 
 
 async def crash_child(path: Path) -> None:
@@ -153,6 +154,73 @@ async def test_sustained_runner_flushes_real_sqlite_and_websocket_clients(
         assert writer["sql_self_wall_seconds"]["__exit__"]["calls"] == writer["batches"]
         assert writer["total_write_thread_cpu_seconds"] > 0
         assert len(measured["main"]["top_self_functions"]) <= 20
+        assert all(
+            "'executemany'" not in function["function"]
+            for function in measured["main"]["top_self_functions"]
+        )
+
+
+async def test_thread_profile_separates_writer_and_restores_hooks() -> None:
+    import pstats
+
+    previous_hook = sys.getprofile()
+    previous_calls = 0
+
+    def previous_profile(_frame, _event, _arg):
+        nonlocal previous_calls
+        previous_calls += 1
+
+    def main_only() -> int:
+        return sum(range(100))
+
+    def writer_only(batch, *, fail=False):
+        with closing(sqlite3.connect(":memory:")) as connection:
+            connection.execute("CREATE TABLE rows(value INTEGER)")
+            with connection:
+                connection.executemany("INSERT INTO rows VALUES(?)", batch)
+                if fail:
+                    raise RuntimeError("expected writer failure")
+
+    profiler = PipelineProfile()
+
+    def worker(fail):
+        prior = sys.getprofile()
+        try:
+            return profiler.write(lambda batch: writer_only(batch, fail=fail), [(1,)])
+        finally:
+            assert sys.getprofile() is prior
+
+    sys.setprofile(previous_profile)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            profiler.main.enable()
+            try:
+                assert main_only() == 4950
+                await asyncio.sleep(0)
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(executor, worker, False)
+                with pytest.raises(RuntimeError, match="expected writer failure"):
+                    await loop.run_in_executor(executor, worker, True)
+                await loop.run_in_executor(executor, worker, False)
+            finally:
+                profiler.main.disable()
+            assert sys.getprofile() is previous_profile
+        assert previous_calls > 0
+        assert profiler.writer is not None
+        main_functions = {key[2] for key in pstats.Stats(profiler.main).stats}
+        writer_functions = {key[2] for key in pstats.Stats(profiler.writer).stats}
+        assert "main_only" in main_functions and "writer_only" not in main_functions
+        assert "writer_only" in writer_functions and "main_only" not in writer_functions
+        report = profiler.report()["writer"]
+        assert report["batches"] == 3 and report["failed_batches"] == 1
+        assert report["attempted_records"] == 3
+        assert report["sql_self_wall_seconds"]["executemany"]["calls"] == 3
+        # CPython's thread-local hook omits implicit context exits on exceptions.
+        assert report["sql_self_wall_seconds"]["__exit__"]["calls"] == 2
+        assert "exception-driven rollback" in report["sql_callback_coverage"]
+        assert report["total_write_thread_cpu_seconds"] > 0
+    finally:
+        sys.setprofile(previous_hook)
 
 
 if __name__ == "__main__":

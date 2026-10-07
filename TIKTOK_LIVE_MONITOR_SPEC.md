@@ -26,7 +26,7 @@ TikTok LIVE 방송 중 들어오는 **모든 일반 댓글을 수신 순서대�
 | 하드웨어 | Raspberry Pi 4, 권장 RAM 4GB |
 | 운영체제 | Raspberry Pi OS Desktop 64-bit |
 | Python 관리 | `uv` |
-| 백엔드 | Python 3.11 이상, FastAPI, Uvicorn |
+| 백엔드 | Python 3.14, FastAPI, Uvicorn |
 | TikTok 수신 | Python `TikTokLive` 패키지 |
 | 실시간 전달 | FastAPI WebSocket |
 | 프론트엔드 | SvelteKit, Svelte 5, TypeScript |
@@ -387,6 +387,8 @@ CSS `transform: rotate(90deg)`로 페이지를 회전하지 않는다. Raspberry
 ## 9. 개발과 운영 실행 방식
 
 ### 개발 모드
+
+Python 3.14는 uv로 설치·관리하고 `backend/.python-version`으로 공유한다. 프로젝트 버전 변경은 `uv python pin 3.14`로 기록하며, 새 checkout의 의존성 설치는 `backend`에서 `uv sync --locked --managed-python`으로 수행한다. 필요한 Python이 없으면 uv가 다운로드하며 `uv python install 3.14`로 미리 설치할 수도 있다.
 
 - Backend: `uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`
 - Frontend: `pnpm dev`

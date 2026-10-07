@@ -22,7 +22,7 @@ async def websocket_endpoint(socket: WebSocket, monitor: MonitorDep) -> None:
             # This channel is server-to-browser only; reject application input.
             await socket.close(code=1008)
             break
-    except (WebSocketDisconnect, RuntimeError):
+    except WebSocketDisconnect, RuntimeError:
         pass
     finally:
         await broadcaster.disconnect(socket)

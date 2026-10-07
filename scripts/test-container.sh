@@ -46,9 +46,11 @@ trap 'exit 143' TERM
 "${compose[@]}" build
 "${compose[@]}" run --rm --no-deps --no-TTY app python - <<'PY'
 import os
+import sys
 from pathlib import Path
 
 archive = Path(os.environ["ARCHIVE_PATH"])
+assert sys.version_info[:2] == (3, 14), "Container must use the project's Python version"
 assert os.geteuid() == 10001
 assert not archive.exists(), "Smoke archive must start without a database"
 assert archive.parent.stat().st_uid == archive.parent.stat().st_gid == 10001

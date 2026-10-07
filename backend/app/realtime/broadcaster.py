@@ -43,7 +43,7 @@ class WebSocketBroadcaster:
         send_timeout: float = 5,
         max_clients: int = 16,
         gift_images: GiftImageCache | None = None,
-        archive: "Archive | None" = None,
+        archive: Archive | None = None,
     ) -> None:
         self.status = status
         self.live_dirty = False

@@ -30,6 +30,8 @@ cd tiktok_live_monitor
 
 설치·업데이트에도 `--build`를 사용할 수 있습니다. 상세 옵션은 각 스크립트의 `--help`를 참고하세요. 운영은 단일 컨테이너·non-root·localhost 접속이며 Chromium은 호스트에서 실행합니다.
 
+개발 백엔드는 uv로 관리하는 Python 3.14를 사용합니다. [Python 설치와 의존성 준비](docs/installation-dev.md#3-의존성-설치)는 저장소의 버전 pin과 lockfile을 따릅니다.
+
 ## CI
 
 | 브랜치 | 자동 실행 |

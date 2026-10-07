@@ -7,7 +7,7 @@
 | 도구 | 프로젝트 기준 |
 | --- | --- |
 | Git, curl | 저장소 복제와 설치 파일 다운로드 |
-| Python | 3.11 (`uv sync`가 필요 시 설치) |
+| Python | 3.14 (uv가 설치·관리) |
 | uv | CI 검증 버전 0.12.8 |
 | Node.js | 22.20.0 (CI와 동일) |
 | pnpm | 10.20.0 (`frontend/package.json`에 지정) |
@@ -29,7 +29,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv --version
 ```
 
-Python은 아래 `uv sync --locked` 단계에서 `backend/.python-version`의 3.11에 맞춰 준비됩니다. 사용할 Python이 없으면 uv가 다운로드하므로 별도 Python 설치 명령은 필요하지 않습니다. [uv의 자동 Python 다운로드](https://docs.astral.sh/uv/guides/install-python/#automatic-python-downloads)
+Python은 아래 `uv sync --locked --managed-python` 단계에서 `backend/.python-version`의 3.14에 맞춰 준비됩니다. 사용할 uv 관리 Python이 없으면 자동으로 다운로드합니다. 미리 설치하려면 `uv python install 3.14`를 사용할 수 있습니다. [uv의 Python 설치·관리](https://docs.astral.sh/uv/guides/install-python/)
 
 ### 프론트엔드: Node.js와 pnpm
 
@@ -62,12 +62,15 @@ test -f .env || cp .env.example .env
 
 ```bash
 cd ~/tiktok_live_monitor/backend
-uv sync --locked
+uv sync --locked --managed-python
+uv run --locked python --version
 cd ../frontend
 pnpm install --frozen-lockfile
 ```
 
 `backend/.venv`는 uv가 관리합니다. 별도로 가상환경을 활성화할 필요는 없습니다. 설치가 lockfile 불일치로 실패하면 오류를 확인하고, 단순 설치 목적으로 lockfile을 삭제하거나 재생성하지 마세요.
+
+Python 버전은 저장소의 `backend/.python-version`에 이미 3.14로 고정되어 있으므로 새 checkout에서 다시 pin할 필요는 없습니다. 프로젝트의 Python 버전을 변경할 때는 `backend`에서 `uv python pin 3.14`로 이 파일을 갱신하고 `pyproject.toml`의 요구 버전과 lockfile도 함께 맞춥니다. [uv의 버전 pin](https://docs.astral.sh/uv/concepts/python-versions/#python-version-files)
 
 ## 4. 개발 서버 실행
 

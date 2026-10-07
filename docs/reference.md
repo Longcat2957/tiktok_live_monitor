@@ -176,14 +176,15 @@ Linux 데스크톱에서 개발 도구와 Chromium을 설치한 뒤 아래 한 �
 
 의존성 설치 후 `http://127.0.0.1:5173`을 자동으로 엽니다. 실제 방송·데모는 열린 화면에서 선택합니다. 종료는 `Ctrl+C`입니다. 브라우저 없이 실행하려면 `DEV_OPEN_BROWSER=0 ./scripts/dev.sh`를 사용하세요. 실제 방송 연결과 옵션은 [개발 서버 실행 가이드](installation-dev.md#4-개발-서버-실행)를 참고하세요.
 
-Python 3.11 이상, uv, Node.js 22.20 이상(22 계열 권장), pnpm 10.20.0이 필요합니다. 버전은 `backend/uv.lock`, `frontend/pnpm-lock.yaml`로 고정합니다. 주요 검증 버전: TikTokLive 7.0.1, FastAPI 0.141.1, Svelte 5.57.0, SvelteKit 2.70.3, TypeScript 6.0.3. TypeScript 7은 현재 SvelteKit peer 지원 범위 밖이라 사용하지 않습니다.
+Python 3.14, uv, Node.js 22.20 이상(22 계열 권장), pnpm 10.20.0이 필요합니다. Python은 `backend/.python-version`, 패키지는 `backend/uv.lock`, `frontend/pnpm-lock.yaml`로 고정합니다. 주요 검증 버전: TikTokLive 7.0.1, FastAPI 0.141.1, Svelte 5.57.0, SvelteKit 2.70.3, TypeScript 6.0.3. TypeScript 7은 현재 SvelteKit peer 지원 범위 밖이라 사용하지 않습니다.
 
 도구가 없다면 먼저 [개발 도구 설치](installation-dev.md#1-개발-도구-설치)를 진행하세요. 아래 명령은 도구 설치 후 저장소 루트에서 시작합니다.
 
 ```bash
 cd backend
-uv sync --frozen
-uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+uv sync --locked --managed-python
+uv run --locked python --version
+uv run --locked uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 별도 터미널:
@@ -286,6 +287,8 @@ uv run python profile_api.py --mode churn --duration 8 --profile --directory /pa
 ```
 
 `read`는 health·설정·warm 이미지 조회, `mixed`는 시작·종료·refresh·설정 변경을 섞고, `churn`은 HTTP 조회·댓글 전달에 반복 WS 연결·종료와 TCP abort를 겹칩니다. `mixed-churn`은 변경·조회 API, 기존 peer의 댓글 전달, WS 재접속·강제 종료, SQLite 저장을 동시에 실행합니다. 동시 요청 수는 이전 응답 후 다음 요청을 보내는 closed-loop 방식입니다. 각 HTTP worker는 한 연결을 재사용하는 별도 풀을 갖습니다. 서버와 생성기 CPU를 모두 기록하므로 생성기가 포화된 수치를 서버 최대 처리량으로 해석하지 않습니다. `--profile`은 각 프로세스 메인 thread CPU와 실제 SQLite writer를 분리합니다. 프로파일은 부하를 추가하므로 처리량 비교는 끈 상태에서 합니다.
+
+Python 3.14의 `cProfile`은 스레드 간 측정이 섞이고 동시 profiler가 충돌하므로, 도구의 `--profile`은 표준 라이브러리 `profile`과 스레드별 hook을 사용합니다. 결과의 `backend`는 `stdlib_profile_thread_local`입니다. Python hook의 비용이 커서 이전 3.11 `cProfile` 수치와 직접 비교하지 않습니다. 예외로 인한 SQLite rollback은 일부 C-call 추적에서 빠질 수 있으며, 전체 쓰기 시간·시도·실패 건수에는 포함됩니다.
 
 HTTP 상태별 건수·오류·지연, health 503의 fault·source state·저장 상태, handshake 101/403, 기존 WS peer의 순서·수신·지연, DB 무결성·저장 누락·진단 종류와 종료 정리를 JSON으로 출력합니다. 변경 API의 409(상태 충돌)·503(요청 상한)과 WS admission 403은 별도로 집계하며 예상된 거부입니다. 조회 503은 검사를 실패시킵니다. `mixed`와 `mixed-churn`에서는 세션 경계에서 이전 표시 큐를 버리는 동작을 허용하되 SQLite에는 활성 sink가 접수한 댓글이 모두 저장돼야 합니다. source는 전환마다 시작하므로 이 두 모드의 `--comment-rate`를 전체 실행의 고정 입력량으로 해석하지 않습니다.
 

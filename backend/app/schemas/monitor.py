@@ -16,7 +16,7 @@ class AccountInput(SessionInput):
     username: str = Field(default="", max_length=256)
 
     @model_validator(mode="after")
-    def normalize(self) -> "AccountInput":
+    def normalize(self) -> AccountInput:
         if self.source == "mock":
             self.username = ""
             return self

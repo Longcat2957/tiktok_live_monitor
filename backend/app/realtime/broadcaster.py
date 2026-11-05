@@ -216,6 +216,24 @@ class WebSocketBroadcaster:
             if state_changed:
                 self.broadcast(self.status)
 
+    def update_youtube_status(self, state: SourceState, message: str, session_id: str) -> None:
+        if session_id != self.status.session_id or self.status.youtube is None:
+            return
+        youtube = self.status.youtube.model_copy(update={"state": state, "message": message})
+        self.status = self.status.model_copy(update={"youtube": youtube})
+        self.broadcast(self.status)
+
+    def update_youtube_live(self, info: LiveInfo) -> None:
+        youtube = self.status.youtube
+        if youtube is not None and info != youtube.live:
+            state_changed = info.state != youtube.live.state
+            self.status = self.status.model_copy(
+                update={"youtube": youtube.model_copy(update={"live": info})}
+            )
+            self.live_dirty = self.live_dirty or not state_changed
+            if state_changed:
+                self.broadcast(self.status)
+
     async def consume(self, queue: asyncio.Queue[FeedEvent]) -> None:
         last_live = monotonic()
         while True:

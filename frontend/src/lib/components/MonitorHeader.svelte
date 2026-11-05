@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { Button, ConnectedButtons } from 'm3-svelte';
+    import type { FeedLayout } from '$lib/types';
     import FontScaleControl from './FontScaleControl.svelte';
     import ThemeToggle from './ThemeToggle.svelte';
     import ToolbarButton from './ToolbarButton.svelte';
@@ -7,6 +9,7 @@
         active,
         blocked,
         fontScale = $bindable(100),
+        layout = $bindable('split'),
         onsettings,
         onrefresh,
         onstop,
@@ -14,11 +17,20 @@
         active: boolean;
         blocked: boolean;
         fontScale: number;
+        layout: FeedLayout;
         onsettings: () => void;
         onrefresh: () => void;
         onstop: () => void;
     } = $props();
-    let title: HTMLDivElement;
+    let title = $state<HTMLElement>();
+    const layouts = [
+        { value: 'split', label: '상하 분할' },
+        { value: 'side-by-side', label: '좌우 분할' },
+        { value: 'combined', label: '통합' },
+        { value: 'tiktok', label: 'TikTok' },
+        { value: 'youtube', label: 'YouTube' },
+    ];
+    let layoutLabel = $derived(layouts.find((option) => option.value === layout)?.label);
 
     export function focus() {
         title?.focus({ preventScroll: true });
@@ -26,10 +38,37 @@
 </script>
 
 <header class="monitor-header">
-    <div class="wordmark" id="monitor-title" tabindex="-1" bind:this={title}>
-        <span class="live-badge">LIVE</span><span>댓글 모니터</span>
-    </div>
     {#if active}
+        <details class="view-options">
+            <summary id="monitor-title" aria-label={`댓글 보기: ${layoutLabel}`} bind:this={title}>
+                <strong>{layoutLabel}</strong>
+                <svg
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <path d="m6 9 6 6 6-6" />
+                </svg>
+            </summary>
+            <fieldset class="view-controls">
+                <legend>댓글 보기</legend>
+                <ConnectedButtons>
+                    {#each layouts as option (option.value)}
+                        <Button variant="tonal" size="s" square label>
+                            <input
+                                type="radio"
+                                name="feed-view"
+                                value={option.value}
+                                bind:group={layout}
+                            />
+                            {option.label}
+                        </Button>
+                    {/each}
+                </ConnectedButtons>
+            </fieldset>
+        </details>
         <div class="monitor-actions">
             <FontScaleControl bind:value={fontScale} />
             <ThemeToggle />
@@ -76,7 +115,11 @@
                 </svg>
             </ToolbarButton>
         </div>
-    {:else}<div class="monitor-actions">
+    {:else}
+        <div class="wordmark" id="monitor-title" tabindex="-1" bind:this={title}>
+            <span class="live-badge">LIVE</span><span>댓글 모니터</span>
+        </div>
+        <div class="monitor-actions">
             <span class="header-note">YOUR LIVE. EVERY COMMENT.</span><ThemeToggle />
         </div>{/if}
 </header>
@@ -87,9 +130,9 @@
         align-items: center;
         justify-content: space-between;
         flex-wrap: wrap;
-        gap: 16px;
+        gap: 6px 12px;
         flex-shrink: 0;
-        padding-bottom: 24px;
+        padding-bottom: 8px;
         border-bottom: 1px solid var(--m3c-outline-variant);
     }
     .monitor-actions {
@@ -97,7 +140,70 @@
         align-items: center;
         flex-wrap: wrap;
         justify-content: flex-end;
-        gap: 12px;
+        gap: 6px;
+    }
+    .view-options {
+        position: relative;
+        flex-shrink: 0;
+    }
+    summary {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 44px;
+        cursor: pointer;
+        list-style: none;
+        font-size: 0.75rem;
+        color: var(--m3c-on-surface-variant);
+    }
+    summary::-webkit-details-marker {
+        display: none;
+    }
+    summary strong {
+        color: var(--m3c-on-surface);
+    }
+    summary svg {
+        width: 18px;
+        height: 18px;
+    }
+    .view-options[open] summary svg {
+        transform: rotate(180deg);
+    }
+    summary:focus-visible {
+        outline: 2px solid var(--m3c-secondary);
+        outline-offset: 3px;
+        border-radius: 4px;
+    }
+    .view-controls {
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 0;
+        z-index: 3;
+        width: 400px;
+        min-width: 0;
+        max-width: calc(100vw - 24px);
+        margin: 0;
+        padding: 8px;
+        border: 1px solid var(--m3c-outline-variant);
+        border-radius: 12px;
+        background: var(--m3c-surface-container-high);
+        box-shadow: 0 4px 12px #0004;
+    }
+    .view-controls :global(.m3-container) {
+        min-width: 0;
+    }
+    .view-controls :global(label.m3-container) {
+        min-height: 44px;
+        padding-inline: 6px;
+        font-size: 14px;
+        white-space: nowrap;
+    }
+    legend {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
     }
     .wordmark {
         display: flex;
@@ -125,6 +231,13 @@
         color: var(--m3c-on-surface-variant);
     }
     @media (width < 480px) {
+        .view-controls > :global(div) {
+            grid-auto-flow: row;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+        .monitor-actions {
+            display: contents;
+        }
         .header-note {
             display: none;
         }

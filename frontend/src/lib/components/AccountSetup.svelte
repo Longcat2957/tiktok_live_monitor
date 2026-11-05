@@ -14,11 +14,12 @@
         blocked: boolean;
         saving: boolean;
         backend: BackendState;
-        onstart: (mode: Source, account: string) => Promise<string | null>;
+        onstart: (mode: Source, account: string, youtubeVideo: string) => Promise<string | null>;
     } = $props();
     let sessionId = untrack(() => source.session_id);
     let mode = $state<Source>(untrack(() => source.source));
     let account = $state(untrack(() => source.username ?? '@sejame33'));
+    let youtubeVideo = $state('');
     let error = $state('');
     let panel: HTMLElement;
 
@@ -27,6 +28,7 @@
             sessionId = source.session_id;
             mode = source.source;
             account = source.username ?? '@sejame33';
+            youtubeVideo = '';
             error = '';
         }
     });
@@ -44,7 +46,7 @@
         const expected = source.session_id;
         error = '';
         try {
-            const problem = await onstart(mode, account);
+            const problem = await onstart(mode, account, youtubeVideo);
             if (source.session_id === expected) error = problem ?? '';
         } catch {
             if (source.session_id === expected)
@@ -106,6 +108,21 @@
                     @아이디 또는 TikTok 프로필·LIVE 주소를 입력하세요.<br />방송 전이라면 시작할
                     때까지 기다립니다.
                 </p>
+                <div class="account-field youtube-field">
+                    <TextFieldOutlined
+                        label="YouTube 방송 주소 또는 영상 ID (선택)"
+                        bind:value={youtubeVideo}
+                        maxlength={2048}
+                        autocomplete="off"
+                        autocapitalize="none"
+                        spellcheck="false"
+                        disabled={blocked || mode !== 'tiktok'}
+                        aria-describedby="youtube-hint"
+                    />
+                </div>
+                <p id="youtube-hint">
+                    동시 방송의 실시간 채팅을 함께 표시합니다. 서버 API 키 설정이 필요합니다.
+                </p>
             </div>
             <div class="mode-content" aria-hidden={mode !== 'mock'} inert={mode !== 'mock'}>
                 <div class="demo-description">
@@ -113,8 +130,8 @@
                     <h2>방송 없이, 바로 체험.</h2>
                 </div>
                 <p>
-                    가상의 댓글·선물·통계와 방송 상태를 확인하세요.<br />계정 입력이나 실제 방송
-                    연결은 필요하지 않습니다.
+                    TikTok과 YouTube의 가상 댓글·활동을 함께 확인하세요.<br />계정 입력이나 실제
+                    방송 연결은 필요하지 않습니다.
                 </p>
             </div>
         </div>
@@ -129,6 +146,9 @@
 </section>
 
 <style>
+    .youtube-field {
+        margin-top: 24px;
+    }
     .account-panel {
         flex: 1;
         min-height: 0;

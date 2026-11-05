@@ -47,6 +47,8 @@
     --m3v-background: var(--m3c-surface-container-low);
     --m3-field-outlined-shape: 8px;
     --monitor-waiting: #f1cb76;
+    --platform-tiktok: #25f4ee;
+    --platform-youtube: #ff4d60;
     font-family: var(--m3-font);
     color: var(--m3c-on-surface);
     background: var(--m3c-surface);
@@ -86,6 +88,8 @@
     --m3c-inverse-on-surface: #f8f8fa;
     --m3c-inverse-primary: #ffb2c0;
     --monitor-waiting: #806000;
+    --platform-tiktok: #007773;
+    --platform-youtube: #bc1830;
 }
 * {
     box-sizing: border-box;

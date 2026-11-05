@@ -1,17 +1,28 @@
 <script lang="ts">
     import BroadcastAccount from './BroadcastAccount.svelte';
-    import type { BackendState, StatusMessage } from '$lib/types';
+    import type { BackendState, Platform, StatusMessage } from '$lib/types';
 
-    let { source, backend }: { source: StatusMessage; backend: BackendState } = $props();
+    let {
+        source,
+        backend,
+        platform = 'tiktok',
+    }: { source: StatusMessage; backend: BackendState; platform?: Platform } = $props();
+    let status = $derived(platform === 'tiktok' ? source : source.youtube);
+    let live = $derived(status?.live);
+    let name = $derived(platform === 'tiktok' ? 'TikTok' : 'YouTube');
     const number = new Intl.NumberFormat('ko-KR');
 </script>
 
-<section class="live-summary" aria-label="방송 정보">
-    {#key source.username}<BroadcastAccount username={source.username} />{/key}
+<section class="live-summary" data-platform={platform} aria-label={`${name} 방송 정보`}>
+    {#if source.source === 'mock'}
+        <span class="demo-label">DEMO</span>
+    {:else if platform === 'tiktok'}
+        {#key source.username}<BroadcastAccount username={source.username} />{/key}
+    {/if}
     <dl
         class="live-metrics"
-        aria-label="방송 통계"
-        class:stale={backend !== 'connected' || source.state !== 'connected'}
+        aria-label={`${name} 방송 통계`}
+        class:stale={backend !== 'connected' || status?.state !== 'connected'}
     >
         <div class="live-metric">
             <dt>
@@ -29,12 +40,8 @@
                 </svg>
                 시청자
             </dt>
-            <dd>
-                <strong
-                    >{source.live?.viewers == null
-                        ? '—'
-                        : number.format(source.live.viewers)}</strong
-                >
+            <dd title={live?.viewers == null ? '제공되지 않음' : undefined}>
+                <strong>{live?.viewers == null ? '—' : number.format(live.viewers)}</strong>
             </dd>
         </div>
         <div class="live-metric likes">
@@ -54,10 +61,8 @@
                 </svg>
                 좋아요
             </dt>
-            <dd>
-                <strong
-                    >{source.live?.likes == null ? '—' : number.format(source.live.likes)}</strong
-                >
+            <dd title={live?.likes == null ? '제공되지 않음' : undefined}>
+                <strong>{live?.likes == null ? '—' : number.format(live.likes)}</strong>
             </dd>
         </div>
     </dl>
@@ -69,28 +74,41 @@
         flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
-        gap: 12px 20px;
+        gap: 4px 12px;
         flex-shrink: 0;
-        margin-bottom: -16px;
         font-size: 0.8rem;
+    }
+    .demo-label {
+        display: inline-flex;
+        align-items: center;
+        font-size: 0.6rem;
+        font-weight: 750;
+        color: var(--m3c-on-secondary-container);
+        background: var(--m3c-secondary-container);
+        border-radius: 4px;
+        padding: 4px 8px;
     }
     .live-metrics {
         display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
         align-items: center;
         min-width: 0;
+        max-width: 100%;
         margin: 0;
-        gap: 16px;
+        gap: 4px 10px;
         color: var(--m3c-on-surface-variant);
         font-variant-numeric: tabular-nums;
+        margin-inline-start: auto;
     }
     .live-metric {
         display: flex;
         align-items: center;
         min-width: 0;
-        gap: 8px;
+        gap: 6px;
     }
     .live-metric + .live-metric {
-        padding-inline-start: 16px;
+        padding-inline-start: 10px;
         border-inline-start: 1px solid var(--m3c-outline-variant);
     }
     .live-metric svg {
@@ -114,7 +132,7 @@
         min-width: 0;
         margin: 0;
         overflow-wrap: anywhere;
-        font-size: 1.25rem;
+        font-size: 1rem;
         line-height: 1.2;
         color: var(--m3c-on-surface);
     }

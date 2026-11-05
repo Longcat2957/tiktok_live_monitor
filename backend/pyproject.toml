@@ -3,10 +3,24 @@ name = "tiktok-live-monitor"
 version = "1.0.0"
 description = "Portrait TikTok LIVE comment monitor"
 requires-python = ">=3.14"
-dependencies = ["fastapi", "uvicorn[standard]", "pydantic-settings", "TikTokLive", "httpx"]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic-settings",
+    "TikTokLive",
+    "httpx",
+    "grpcio>=1.85.1",
+    "protobuf>=7.36.1",
+]
 
 [dependency-groups]
-dev = ["pytest", "pytest-asyncio", "mypy", "ruff"]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "mypy",
+    "ruff",
+    "grpcio-tools>=1.85.1",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -19,12 +33,17 @@ strict = true
 files = ["app"]
 
 [[tool.mypy.overrides]]
-module = ["TikTokLive.*"]
+module = ["TikTokLive.*", "grpc.*", "google.protobuf.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["app.integrations.youtube_proto.*"]
+ignore_errors = true
 
 [tool.ruff]
 target-version = "py314"
 line-length = 100
+extend-exclude = ["app/integrations/youtube_proto/*_pb2*.py", "app/integrations/youtube_proto/*_pb2.pyi"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "UP"]

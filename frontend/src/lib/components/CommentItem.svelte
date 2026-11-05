@@ -1,11 +1,17 @@
 <script lang="ts">
     import { safeAvatar, safeGiftImage, type FeedMessage } from '../types';
-    let { comment, previous }: { comment: FeedMessage; previous?: FeedMessage } = $props();
+    import PlatformBadge from './PlatformBadge.svelte';
+    let {
+        comment,
+        previous,
+        showPlatform = false,
+    }: { comment: FeedMessage; previous?: FeedMessage; showPlatform?: boolean } = $props();
     let imageFailed = $state(false);
     let giftImageFailed = $state(false);
     let continued = $derived(
         comment.type === 'comment' &&
             previous?.type === 'comment' &&
+            comment.platform === previous.platform &&
             Boolean(comment.user.unique_id.trim()) &&
             comment.user.unique_id === previous.user.unique_id,
     );
@@ -59,10 +65,15 @@
     class="comment"
     class:activity={comment.type === 'activity'}
     class:continued
+    class:identified={showPlatform}
     aria-label={continued ? `${name}의 이어지는 댓글` : undefined}
     data-comment-id={comment.id}
+    data-platform={comment.platform}
     data-kind={comment.type === 'activity' ? comment.kind : 'comment'}
 >
+    {#if showPlatform}
+        <span class="platform-label"><PlatformBadge platform={comment.platform} /></span>
+    {/if}
     {#if comment.type === 'activity'}
         <div class="activity-header">
             {@render avatar()}
@@ -114,6 +125,11 @@
 </article>
 
 <style>
+    .platform-label {
+        display: inline-block;
+        margin-bottom: 12px;
+        font-size: clamp(16px, calc(22px * var(--comment-scale, 1)), 28px);
+    }
     .comment {
         flex-shrink: 0;
         padding: clamp(18px, 2.7vw, 34px) 0;
@@ -169,7 +185,8 @@
     }
     .avatar {
         width: calc(80px * var(--comment-scale, 1));
-        height: calc(80px * var(--comment-scale, 1));
+        max-width: 100%;
+        aspect-ratio: 1;
         flex-shrink: 0;
         display: inline-flex;
         align-items: center;
@@ -182,7 +199,8 @@
     }
     .avatar img {
         width: 100%;
-        height: 100%;
+        height: auto;
+        aspect-ratio: 1;
         object-fit: cover;
     }
     .user-badge,
@@ -272,5 +290,12 @@
         border: calc(2px * var(--comment-scale, 1)) solid currentColor;
         font-size: calc(clamp(26px, 3.6vw, 40px) * var(--comment-scale, 1));
         overflow-wrap: anywhere;
+    }
+    .comment.identified {
+        border-inline-start: 4px solid var(--platform-tiktok);
+        padding-inline-start: calc(14px * var(--comment-scale, 1));
+    }
+    .comment.identified[data-platform='youtube'] {
+        border-inline-start-color: var(--platform-youtube);
     }
 </style>

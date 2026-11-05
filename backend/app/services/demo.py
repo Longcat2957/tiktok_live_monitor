@@ -28,13 +28,17 @@ class DemoStream:
         sink: EventSink,
         interval: float,
         sequence: Iterator[int],
+        youtube_sink: EventSink | None = None,
     ) -> None:
         self.sink = sink
         self.interval = interval
         self.sequence = sequence
+        self.youtube_sink = youtube_sink
 
     async def run(self) -> None:
         self.sink.status("connected", "모의 댓글 수신 중")
+        if self.youtube_sink is not None:
+            self.youtube_sink.status("connected", "YouTube 모의 댓글 수신 중")
         while True:
             index = next(self.sequence)
             self.sink.live(
@@ -57,6 +61,16 @@ class DemoStream:
                 avatar_url=f"/demo-avatar-{index % 3}.svg" if index % 4 != 3 else None,
             )
             self.sink.publish(Comment(user=user, comment=f"[데모 #{index + 1}] {body}"))
+            if self.youtube_sink is not None:
+                self.youtube_sink.live(
+                    LiveInfo(state="live", viewers=64 + index % 23, likes=480 + index * 7)
+                )
+                self.youtube_sink.publish(
+                    Comment(
+                        user=User(nickname=nickname, unique_id=unique_id),
+                        comment=f"[데모 #{index + 1}] YouTube에서 보고 있어요! {body}",
+                    )
+                )
             activity = ACTIVITIES.get(index % 12)
             if activity is not None:
                 kind, quantity = activity

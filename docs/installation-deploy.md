@@ -110,7 +110,11 @@ SQLite를 포함한 이미지가 발행된 뒤 기존 `./scripts/update.sh`를 �
 
 ### SQLite 보관과 외부 백업
 
-댓글과 진단은 각각 `comments`, `diagnostics` 테이블에 보관합니다. 데모 댓글은 `source=mock`으로 구별됩니다. 화면의 최근 목록 보관 수, 댓글 비우기·재연결·계정 변경은 DB 기록을 지우지 않습니다. 활동·이미지·배지와 원본 이벤트 payload는 저장하지 않고, 저장 댓글을 브라우저에 replay하지 않습니다. 자동 보관 기한 삭제는 없으므로 `docker system df`와 호스트 디스크 여유 공간을 확인하세요.
+댓글과 진단은 각각 `comments`, `diagnostics` 테이블에 보관합니다. 데모 댓글은 `source=mock`, 실방송 댓글은 `source=tiktok` 또는 `source=youtube`로 구별됩니다. YouTube의 `username`은 선택한 영상 ID입니다. 화면의 최근 목록 보관 수, 댓글 비우기·재연결·계정 변경은 DB 기록을 지우지 않습니다. 활동·이미지·배지와 원본 이벤트 payload는 저장하지 않고, 저장 댓글을 브라우저에 replay하지 않습니다.
+
+**실방송 YouTube 데이터에만 30일 보관 정책**을 적용합니다. 기존 writer가 앱 시작 시와 실행 중 60초마다 `source=youtube`인 댓글·진단을 정리합니다. 댓글은 UTC `received_at`, 진단은 UTC `occurred_at`을 기준으로 하며, 다음 정리까지 30일을 넘지 않도록 최대 1분 일찍 만료시킵니다. 앱이 꺼져 있으면 정리는 다음 시작 때 수행합니다. 정리 오류도 `storage.error`와 health 503으로 보고하며 DB를 재생성하지 않습니다. TikTok·mock에는 자동 삭제를 적용하지 않으므로 디스크 여유 공간을 계속 확인하세요. 만료 행을 삭제해도 SQLite 파일 크기가 즉시 줄지는 않으며 빈 페이지는 이후 저장에 재사용됩니다.
+
+외부로 반출한 snapshot에는 YouTube 데이터도 포함됩니다. 앱은 외부 복사본을 수정하거나 삭제하지 않으므로 snapshot도 같은 보관 기한 안에서 별도로 관리해야 합니다.
 
 저장 큐는 2,000개이고 writer는 최대 100개를 한 transaction으로 저장하며, 부분 batch도 약 1초마다 commit합니다. `/health`의 `storage.queued`는 처리 중인 batch까지 포함하고, 저장·누락 카운터는 현재 프로세스의 누적 수입니다. 강제 종료·전원 차단 시 아직 commit하지 않은 큐와 batch는 남지 않을 수 있습니다.
 

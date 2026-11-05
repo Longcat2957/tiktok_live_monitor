@@ -78,7 +78,10 @@ export interface MonitorView {
     tone: 'neutral' | 'waiting' | 'live' | 'error';
 }
 
-export function monitorView(backend: BackendState, source: StatusMessage | null): MonitorView {
+export function monitorView(
+    backend: BackendState,
+    source: Pick<StatusMessage, 'state' | 'message' | 'live'> | null,
+): MonitorView {
     let kind: MonitorView['kind'];
     if (backend === 'connecting') kind = 'server-connecting';
     else if (backend === 'disconnected') kind = 'server-disconnected';

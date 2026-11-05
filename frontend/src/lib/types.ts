@@ -1,6 +1,8 @@
 export type SourceState =
     'idle' | 'connecting' | 'connected' | 'waiting' | 'disconnected' | 'error';
 export type Source = 'tiktok' | 'mock';
+export type Platform = 'tiktok' | 'youtube';
+export type FeedLayout = 'split' | 'side-by-side' | 'combined' | Platform;
 export interface UserBadge {
     kind: 'subscriber' | 'fan';
     level: number | null;
@@ -18,6 +20,7 @@ export interface LiveInfo {
 }
 export interface CommentMessage {
     type: 'comment';
+    platform: Platform;
     id: string;
     received_at: string;
     user: Viewer;
@@ -25,6 +28,7 @@ export interface CommentMessage {
 }
 export interface ActivityMessage {
     type: 'activity';
+    platform: Platform;
     id: string;
     received_at: string;
     user: Viewer;
@@ -34,6 +38,12 @@ export interface ActivityMessage {
     gift_image_url?: string | null;
 }
 export type FeedMessage = CommentMessage | ActivityMessage;
+export interface YouTubeStatus {
+    video_id: string;
+    state: SourceState;
+    message: string;
+    live?: LiveInfo;
+}
 export interface StatusMessage {
     type: 'status';
     live?: LiveInfo;
@@ -43,6 +53,7 @@ export interface StatusMessage {
     session_id: string;
     username: string | null;
     comment_history_size: number;
+    youtube?: YouTubeStatus | null;
 }
 export type Message = FeedMessage | StatusMessage;
 export type BackendState = 'connecting' | 'connected' | 'disconnected';
@@ -126,6 +137,25 @@ function validLive(value: unknown): boolean {
     );
 }
 
+function validState(value: unknown): value is SourceState {
+    return (
+        typeof value === 'string' &&
+        ['idle', 'connecting', 'connected', 'waiting', 'disconnected', 'error'].includes(value)
+    );
+}
+
+function validYouTube(value: unknown): boolean {
+    return (
+        value == null ||
+        (record(value) &&
+            stringWithinLimit(value.video_id, 256) &&
+            value.video_id.length > 0 &&
+            validState(value.state) &&
+            typeof value.message === 'string' &&
+            validLive(value.live))
+    );
+}
+
 export function parseMessage(raw: unknown): Message | null {
     if (typeof raw !== 'string') return null;
     let value: unknown;
@@ -142,6 +172,8 @@ export function parseMessage(raw: unknown): Message | null {
         typeof value.received_at === 'string' &&
         Number.isFinite(Date.parse(value.received_at))
     ) {
+        const platform = value.platform === undefined ? 'tiktok' : value.platform;
+        if (platform !== 'tiktok' && platform !== 'youtube') return null;
         const user = parseUser(value.user);
         if (!user) return null;
         if (
@@ -149,7 +181,7 @@ export function parseMessage(raw: unknown): Message | null {
             stringWithinLimit(value.comment, 10000) &&
             value.comment.trim().length > 0
         )
-            return { ...value, user } as unknown as CommentMessage;
+            return { ...value, platform, user } as unknown as CommentMessage;
         if (
             value.type === 'activity' &&
             typeof value.kind === 'string' &&
@@ -159,7 +191,7 @@ export function parseMessage(raw: unknown): Message | null {
             Number(value.count) >= 1 &&
             Number(value.count) <= 1_000_000_000
         ) {
-            const activity = { ...value, user } as unknown as ActivityMessage;
+            const activity = { ...value, platform, user } as unknown as ActivityMessage;
             if (
                 value.kind !== 'gift' ||
                 !(value.gift_image_url === null || safeGiftImage(value.gift_image_url))
@@ -171,16 +203,14 @@ export function parseMessage(raw: unknown): Message | null {
     if (
         value.type === 'status' &&
         (value.source === 'mock' || value.source === 'tiktok') &&
-        typeof value.state === 'string' &&
-        ['idle', 'connecting', 'connected', 'waiting', 'disconnected', 'error'].includes(
-            value.state,
-        ) &&
+        validState(value.state) &&
         typeof value.message === 'string' &&
         typeof value.session_id === 'string' &&
         Number.isInteger(value.comment_history_size) &&
         Number(value.comment_history_size) >= 1 &&
         Number(value.comment_history_size) <= 1000 &&
         validLive(value.live) &&
+        validYouTube(value.youtube) &&
         value.session_id.length > 0 &&
         (value.username === null || typeof value.username === 'string')
     )

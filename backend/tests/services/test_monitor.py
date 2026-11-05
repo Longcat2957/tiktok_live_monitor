@@ -58,6 +58,7 @@ async def test_unchanged_settings_keep_the_current_session_and_workers():
     monitor = make_monitor()
     try:
         await start(monitor)
+        await eventually(lambda: monitor.broadcaster.status.state == "connected")
         status = monitor.broadcaster.status
         queue, sink = monitor.queue, monitor.sink
         supervisor, stream = monitor.supervisor_task, monitor.stream_task
@@ -110,6 +111,8 @@ async def test_request_cancellation_does_not_interrupt_transition():
             await asyncio.sleep(0)
             request = asyncio.create_task(monitor.stop(monitor.broadcaster.status.session_id))
             await cleanup.wait()
+            await asyncio.sleep(0)
+            assert monitor.broadcaster.status.state != "idle"
             request.cancel()
             await asyncio.gather(request, return_exceptions=True)
             release.set()

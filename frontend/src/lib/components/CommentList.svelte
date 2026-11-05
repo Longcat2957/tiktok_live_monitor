@@ -3,7 +3,18 @@
     import { Button } from 'm3-svelte';
     import type { FeedMessage } from '../types';
     import CommentItem from './CommentItem.svelte';
-    let { comments, fontScale }: { comments: FeedMessage[]; fontScale: number } = $props();
+    let {
+        comments,
+        fontScale,
+        label = '실시간 댓글과 활동',
+        showPlatform = false,
+    }: {
+        comments: FeedMessage[];
+        fontScale: number;
+        label?: string;
+        showPlatform?: boolean;
+    } = $props();
+    const helpId = $props.id();
     let viewport: HTMLDivElement;
     let following = $state(true);
     let unread = $state(0);
@@ -152,12 +163,12 @@
         }}
         tabindex="0"
         role="region"
-        aria-label="실시간 댓글과 활동"
-        aria-describedby="feed-help"
+        aria-label={label}
+        aria-describedby={helpId}
     >
         <div class="comment-list">
             {#each comments as comment, index (comment.id)}
-                <CommentItem {comment} previous={comments[index - 1]} />
+                <CommentItem {comment} previous={comments[index - 1]} {showPlatform} />
             {/each}
         </div>
     </div>
@@ -170,7 +181,7 @@
             <Button type="button" variant="tonal" size="s" onclick={goLatest}>최신 댓글로</Button>
         </div>
     {/if}
-    <p id="feed-help" class="sr-only">
+    <p id={helpId} class="sr-only">
         위로 스크롤하면 최신 댓글로 자동 이동하지 않습니다. 방향키와 Page Up, Page Down으로 읽고 End
         키로 최신 댓글로 이동하세요.
     </p>

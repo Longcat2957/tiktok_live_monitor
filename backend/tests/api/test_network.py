@@ -54,8 +54,11 @@ async def test_real_http_websocket_burst_conflicts_and_shutdown():
                 assert started.status_code == 200
                 for peer in (first, second):
                     async with asyncio.timeout(2):
-                        while json.loads(await peer.recv())["type"] != "comment":
-                            pass
+                        platforms = set()
+                        while len(platforms) < 2:
+                            event = json.loads(await peer.recv())
+                            if event["type"] == "comment":
+                                platforms.add(event["platform"])
                 for number in range(500):
                     app.state.monitor.sink.publish(
                         Comment(

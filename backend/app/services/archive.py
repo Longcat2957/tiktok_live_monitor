@@ -7,7 +7,8 @@ import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.schemas.events import Comment, Status
@@ -19,6 +20,7 @@ Detail = str | int | float | bool | None
 CAPACITY = 2000
 BATCH_SIZE = 100
 FLUSH_SECONDS = 1.0
+YOUTUBE_RETENTION_SECONDS = 60.0
 
 SCHEMA = """
 BEGIN;
@@ -50,6 +52,13 @@ COMMIT;
 """
 
 
+@dataclass(frozen=True)
+class ArchiveContext:
+    session_id: str
+    source: str
+    username: str | None
+
+
 class Archive:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -61,6 +70,7 @@ class Archive:
         self._closing = False
         self._ready = False
         self._error: str | None = None
+        self._retention_error: str | None = None
         self._pending = 0
         self._saved_comments = 0
         self._saved_diagnostics = 0
@@ -74,6 +84,7 @@ class Archive:
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(self._executor, self._open)
+            await self._expire_youtube()
         except asyncio.CancelledError:
             await self.close()
             raise
@@ -86,7 +97,7 @@ class Archive:
         self._ready = True
         self._task = asyncio.create_task(self._write_loop(), name="sqlite-archive")
 
-    def comment(self, event: Comment, status: Status) -> None:
+    def comment(self, event: Comment, status: Status | ArchiveContext) -> None:
         received_at = event.received_at
         if received_at.tzinfo is None:
             received_at = received_at.replace(tzinfo=UTC)
@@ -109,7 +120,7 @@ class Archive:
     def diagnostic(
         self,
         event: str,
-        status: Status | None = None,
+        status: Status | ArchiveContext | None = None,
         *,
         level: str = "info",
         details: dict[str, Detail] | None = None,
@@ -132,7 +143,7 @@ class Archive:
     def get_health(self) -> StorageInfo:
         return StorageInfo(
             ready=self._ready,
-            error=self._error,
+            error=self._error or self._retention_error,
             queued=self._pending,
             saved_comments=self._saved_comments,
             saved_diagnostics=self._saved_diagnostics,
@@ -192,6 +203,43 @@ class Archive:
         connection.execute("PRAGMA synchronous=FULL")
         if version == 0:
             connection.executescript(SCHEMA)
+        with connection:
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS comments_youtube_received_at "
+                "ON comments(received_at) WHERE source='youtube'"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS diagnostics_youtube_occurred_at "
+                "ON diagnostics(occurred_at) WHERE source='youtube'"
+            )
+
+    def _prune_youtube(self) -> None:
+        assert self._connection is not None
+        # Expire one sweep early so ordinary scheduling does not exceed thirty days.
+        cutoff = (
+            datetime.now(UTC) - timedelta(days=30) + timedelta(seconds=YOUTUBE_RETENTION_SECONDS)
+        )
+        with self._connection:
+            self._connection.execute(
+                "DELETE FROM comments WHERE source='youtube' AND received_at<=?",
+                (cutoff.isoformat(timespec="milliseconds"),),
+            )
+            self._connection.execute(
+                "DELETE FROM diagnostics WHERE source='youtube' AND occurred_at<=?",
+                (cutoff.isoformat(),),
+            )
+
+    async def _expire_youtube(self) -> None:
+        assert self._executor is not None
+        try:
+            await asyncio.get_running_loop().run_in_executor(self._executor, self._prune_youtube)
+        except Exception as exc:
+            error = f"retention:{type(exc).__name__}"
+            if error != self._retention_error:
+                logger.error("YouTube archive retention failed (%s)", type(exc).__name__)
+            self._retention_error = error
+        else:
+            self._retention_error = None
 
     def _write(self, batch: list[Record]) -> tuple[int, int]:
         assert self._connection is not None
@@ -212,8 +260,17 @@ class Archive:
     async def _write_loop(self) -> None:
         assert self._executor is not None
         loop = asyncio.get_running_loop()
+        next_retention = loop.time() + YOUTUBE_RETENTION_SECONDS
         while not (self._closing and self._queue.empty()):
-            record = await self._queue.get()
+            if loop.time() >= next_retention:
+                await self._expire_youtube()
+                next_retention = loop.time() + YOUTUBE_RETENTION_SECONDS
+            try:
+                record = await asyncio.wait_for(
+                    self._queue.get(), timeout=max(0, next_retention - loop.time())
+                )
+            except TimeoutError:
+                continue
             if record is None:
                 self._queue.task_done()
                 return

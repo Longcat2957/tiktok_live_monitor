@@ -5,6 +5,7 @@ import { connectMonitor, websocketUrl } from './websocket';
 
 const comment = (id: string): CommentMessage => ({
     type: 'comment',
+    platform: 'tiktok',
     id,
     received_at: '2026-09-12T10:30:00Z',
     user: { nickname: '민수', unique_id: 'minsu' },
@@ -59,6 +60,54 @@ it('bounds history and preserves order, including after repeated IDs', () => {
     expect(history).toHaveLength(30);
     expect(history[0].id).toBe('9970');
     expect(appendComment(history, comment('9999'), 30)).toBe(history);
+});
+
+it('keeps a quiet platform while the other fills its own bounded history', () => {
+    const youtube = { ...comment('youtube'), platform: 'youtube' as const };
+    let history: CommentMessage[] = [youtube];
+    for (let i = 0; i < 100; i++) history = appendComment(history, comment(`tiktok-${i}`), 3);
+    expect(history.map((item) => item.id)).toEqual([
+        'youtube',
+        'tiktok-97',
+        'tiktok-98',
+        'tiktok-99',
+    ]);
+    for (let i = 0; i < 100; i++)
+        history = appendComment(history, { ...youtube, id: `youtube-${i}` }, 3);
+    expect(history).toHaveLength(6);
+    expect(history.map((item) => item.id)).toEqual([
+        'tiktok-97',
+        'tiktok-98',
+        'tiktok-99',
+        'youtube-97',
+        'youtube-98',
+        'youtube-99',
+    ]);
+});
+
+it('validates platforms and independent YouTube status while accepting legacy TikTok frames', () => {
+    const legacy = { ...comment('legacy'), platform: undefined };
+    expect(parseMessage(JSON.stringify(legacy))).toEqual(comment('legacy'));
+    for (const platform of ['unknown', null, ['youtube']])
+        expect(parseMessage(JSON.stringify({ ...comment('x'), platform }))).toBeNull();
+    const status = {
+        type: 'status',
+        source: 'tiktok',
+        state: 'connected',
+        message: '',
+        session_id: 'both',
+        username: 'host',
+        comment_history_size: 30,
+        youtube: {
+            video_id: 'abcdefghijk',
+            state: 'error',
+            message: '채팅을 사용할 수 없습니다.',
+            live: { state: 'unknown', viewers: null, likes: null },
+        },
+    };
+    expect(parseMessage(JSON.stringify(status))).toEqual(status);
+    for (const youtube of [[], 'youtube', {}, { ...status.youtube, state: ['error'] }])
+        expect(parseMessage(JSON.stringify({ ...status, youtube }))).toBeNull();
 });
 
 it('uses same-origin ws and wss', () => {
@@ -128,6 +177,7 @@ it('validates enriched comments, safe avatars, badges and activities', () => {
     expect(parseMessage(JSON.stringify(enriched))).toEqual(enriched);
     const activity = {
         type: 'activity',
+        platform: 'tiktok',
         id: 'gift',
         received_at: enriched.received_at,
         user: enriched.user,
@@ -150,6 +200,7 @@ it('keeps legacy gifts and strips only unsafe optional gift images', () => {
     const digest = 'a'.repeat(64);
     const gift = {
         type: 'activity',
+        platform: 'tiktok',
         id: 'gift-image',
         received_at: comment('gift-image').received_at,
         user: comment('gift-image').user,
@@ -268,6 +319,7 @@ it('retains only valid unique badges in receive order for comments and activitie
     };
     const activity = {
         type: 'activity',
+        platform: 'tiktok',
         id: 'activity',
         received_at: comment('badges').received_at,
         user,
@@ -320,6 +372,7 @@ it('rejects non-string enums without coercing arrays or throwing on malformed ob
     const activity = {
         ...comment('activity'),
         type: 'activity',
+        platform: 'tiktok',
         kind: 'follow',
         gift_name: '',
         count: 1,
@@ -349,6 +402,7 @@ it('matches backend character limits for emoji comments, names and gifts', () =>
     const activity = {
         ...message,
         type: 'activity',
+        platform: 'tiktok',
         kind: 'gift',
         gift_name: '😀'.repeat(256),
         count: 1,

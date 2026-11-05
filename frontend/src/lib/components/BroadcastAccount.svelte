@@ -56,8 +56,6 @@
                 {/if}
             </svg>
         </button>
-    {:else}
-        <span class="demo-label">DEMO</span>
     {/if}
     <span class="copy-feedback" role="status">{feedback ? label : ''}</span>
 </div>
@@ -108,15 +106,6 @@
         width: 16px;
         height: 16px;
         color: var(--m3c-on-surface-variant);
-    }
-    .demo-label {
-        display: inline-flex;
-        align-items: center;
-        min-height: 44px;
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 0.12em;
-        color: var(--m3c-secondary);
     }
     .copy-feedback {
         position: absolute;

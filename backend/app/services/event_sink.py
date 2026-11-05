@@ -4,8 +4,8 @@ from datetime import UTC, datetime
 
 from ..diagnostics import exception_location
 from ..realtime.broadcaster import WebSocketBroadcaster, enqueue_event
-from ..schemas.events import Comment, FeedEvent, LiveInfo, SourceState
-from .archive import Archive
+from ..schemas.events import Comment, FeedEvent, LiveInfo, Platform, SourceState
+from .archive import Archive, ArchiveContext
 
 
 class EventSink:
@@ -16,11 +16,23 @@ class EventSink:
         queue: asyncio.Queue[FeedEvent],
         broadcaster: WebSocketBroadcaster,
         archive: Archive | None = None,
+        *,
+        platform: Platform = "tiktok",
     ) -> None:
         self.queue = queue
         self.broadcaster = broadcaster
         self.archive = archive
-        self.context = broadcaster.status
+        self.platform = platform
+        status = broadcaster.status
+        self.context = ArchiveContext(
+            session_id=status.session_id,
+            source="mock" if status.source == "mock" else platform,
+            username=(
+                status.youtube.video_id
+                if platform == "youtube" and status.youtube is not None
+                else status.username
+            ),
+        )
         self.session_id = broadcaster.status.session_id
         self.active = True
         self.upstream_messages = 0
@@ -79,6 +91,8 @@ class EventSink:
 
     def publish(self, event: FeedEvent) -> None:
         if self.active and self.session_id == self.broadcaster.status.session_id:
+            if event.platform != self.platform:
+                event = event.model_copy(update={"platform": self.platform})
             if isinstance(event, Comment):
                 self.received_comments += 1
                 self.last_comment_received_at = event.received_at.isoformat()
@@ -95,11 +109,19 @@ class EventSink:
 
     def live(self, info: LiveInfo) -> None:
         if self.active and self.session_id == self.broadcaster.status.session_id:
-            self.broadcaster.update_live(info)
+            if self.platform == "youtube":
+                self.broadcaster.update_youtube_live(info)
+            else:
+                self.broadcaster.update_live(info)
 
     def status(self, state: SourceState, message: str) -> None:
         if self.active and self.session_id == self.broadcaster.status.session_id:
-            changed = self.broadcaster.status.state != state
-            self.broadcaster.update_status(state, message, self.session_id)
+            if self.platform == "youtube":
+                youtube = self.broadcaster.status.youtube
+                changed = youtube is not None and youtube.state != state
+                self.broadcaster.update_youtube_status(state, message, self.session_id)
+            else:
+                changed = self.broadcaster.status.state != state
+                self.broadcaster.update_status(state, message, self.session_id)
             if changed:
                 self.diagnostic("source_state", details={"state": state})

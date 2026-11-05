@@ -10,7 +10,10 @@ router = APIRouter()
 @router.post("/account")
 async def start(account: AccountInput, monitor: MonitorDep) -> Status:
     return await monitor.start(
-        account.session_id, source=account.source, username=account.username or None
+        account.session_id,
+        source=account.source,
+        username=account.username or None,
+        youtube_video_id=account.youtube_video_id or None,
     )
 
 

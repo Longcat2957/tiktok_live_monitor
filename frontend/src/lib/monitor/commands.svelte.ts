@@ -17,13 +17,17 @@ export class MonitorCommands {
         return this.saving || this.pendingSession !== null;
     }
 
-    async start(mode: Source, account: string): Promise<string | null> {
+    async start(mode: Source, account: string, youtubeVideo = ''): Promise<string | null> {
         const source = this.getSource();
         if (!source) return null;
         return this.sendChange(
             '/account',
             'POST',
-            { source: mode, username: mode === 'tiktok' ? account : '' },
+            {
+                source: mode,
+                username: mode === 'tiktok' ? account : '',
+                youtube_video_id: mode === 'tiktok' ? youtubeVideo : '',
+            },
             source.session_id,
         );
     }
@@ -139,7 +143,8 @@ export class MonitorCommands {
             });
             if (response.status === 409)
                 return '다른 화면에서 상태가 변경되었습니다. 현재 상태를 확인하고 다시 시도해주세요.';
-            if (response.status === 422) return '@아이디 또는 설정값의 허용 범위를 확인해주세요.';
+            if (response.status === 422)
+                return 'TikTok 아이디, YouTube 방송 주소 또는 설정값의 허용 범위를 확인해주세요.';
             if (response.status >= 500) throw new Error('Server response uncertain');
             if (!response.ok)
                 return '요청을 처리하지 못했습니다. 서버 상태를 확인하고 다시 시도해주세요.';

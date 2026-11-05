@@ -5,6 +5,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 SourceName = Literal["tiktok", "mock"]
+Platform = Literal["tiktok", "youtube"]
 LiveState = Literal["unknown", "live", "paused", "ended"]
 SourceState = Literal["idle", "connecting", "connected", "waiting", "disconnected", "error"]
 
@@ -29,6 +30,7 @@ class User(BaseModel):
 
 class Comment(BaseModel):
     type: Literal["comment"] = "comment"
+    platform: Platform = "tiktok"
     id: str = Field(default_factory=lambda: str(uuid4()))
     received_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     user: User
@@ -37,6 +39,7 @@ class Comment(BaseModel):
 
 class Activity(BaseModel):
     type: Literal["activity"] = "activity"
+    platform: Platform = "tiktok"
     id: str = Field(default_factory=lambda: str(uuid4()))
     received_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     user: User
@@ -49,6 +52,13 @@ class Activity(BaseModel):
 FeedEvent = Comment | Activity
 
 
+class YouTubeStatus(BaseModel):
+    video_id: str
+    state: SourceState
+    message: str
+    live: LiveInfo = Field(default_factory=LiveInfo)
+
+
 class Status(BaseModel):
     type: Literal["status"] = "status"
     live: LiveInfo = Field(default_factory=LiveInfo)
@@ -57,6 +67,7 @@ class Status(BaseModel):
     message: str
     session_id: str = Field(default_factory=lambda: str(uuid4()))
     username: str | None = None
+    youtube: YouTubeStatus | None = None
     comment_history_size: int = Field(default=30, ge=1, le=1000)
 
 

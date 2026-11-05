@@ -1,8 +1,8 @@
-# TikTok LIVE 세로형 댓글 모니터
+# TikTok · YouTube LIVE 세로형 댓글 모니터
 
 **v1.0.0** · Raspberry Pi 4 / Raspberry Pi OS Desktop 64-bit
 
-한 계정의 TikTok LIVE 댓글과 선물·팔로우·공유·구독 알림을 수신 순서대로 표시합니다. 세로 화면, 자동 재연결, 실방송 없이 실행하는 데모를 지원합니다. 댓글과 안전한 백엔드 진단은 SQLite에 저장하며 [외부 백업과 시간별 조회](docs/installation-deploy.md#sqlite-보관과-외부-백업)를 지원합니다.
+TikTok 계정 하나의 댓글·활동과 선택한 YouTube 방송 하나의 실시간 채팅을 함께 표시합니다. **분할**은 위 TikTok / 아래 YouTube, **통합**은 플랫폼 표시가 있는 한 목록이며 **TikTok / YouTube 단독 보기**도 지원합니다. 보기 전환 중에도 수신은 계속됩니다. 자동 재연결과 외부 연결 없이 실행하는 두 플랫폼 데모를 제공합니다. SQLite 보관과 [외부 백업·시간별 조회](docs/installation-deploy.md#sqlite-보관과-외부-백업)도 지원합니다.
 
 ## 빠른 실행
 
@@ -15,6 +15,10 @@ cd tiktok_live_monitor
 ```
 
 `http://127.0.0.1:8000`에서 **실제 방송** 또는 **데모 체험**을 선택하고 시작합니다. 공개 Docker Hub 이미지를 사용하며 `.env`가 없으면 기본 파일을 생성합니다. Pi 64-bit에는 ARM64 이미지가 선택됩니다.
+
+YouTube 동시 수신은 서버 `.env`에 `YOUTUBE_API_KEY`를 설정하고 첫 화면에 YouTube 방송 주소 또는 영상 ID를 추가합니다. TikTok 단독 사용과 데모에는 키가 필요 없습니다. 설정 방법은 [YouTube 동시 수신](docs/reference.md#youtube-동시-수신)을 참고하세요. 이 기능 브랜치의 변경을 실행하려면 `./scripts/start.sh --build`로 현재 소스를 빌드합니다.
+
+실방송 YouTube 댓글·진단은 SQLite에 최대 30일 보관한 뒤 만료 처리합니다. TikTok·데모 기록에는 자동 삭제를 적용하지 않습니다.
 
 ## 주요 명령
 

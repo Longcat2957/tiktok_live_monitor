@@ -1,7 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
 const { version: appVersion } = JSON.parse(
@@ -10,6 +11,7 @@ const { version: appVersion } = JSON.parse(
 
 const baseURL = 'http://127.0.0.1:18768';
 test.use({ baseURL });
+const archiveDirectory = mkdtempSync(join(tmpdir(), 'monitor-a11y-'));
 let server: ChildProcess | undefined;
 
 test.beforeAll(async () => {
@@ -31,6 +33,7 @@ test.beforeAll(async () => {
             env: {
                 ...process.env,
                 MOCK_INTERVAL_SECONDS: '0.1',
+                ARCHIVE_PATH: join(archiveDirectory, 'monitor.sqlite3'),
                 COMMENT_HISTORY_SIZE: '30',
                 STATIC_DIR: resolve('build'),
             },
@@ -62,6 +65,7 @@ test.afterAll(async () => {
         server.kill('SIGTERM');
         await exited;
     }
+    rmSync(archiveDirectory, { recursive: true });
 });
 
 test.beforeEach(async ({ request }) => {

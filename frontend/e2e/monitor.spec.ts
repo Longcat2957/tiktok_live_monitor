@@ -1,7 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { resolve } from 'node:path';
-import { expect, test, type APIRequestContext } from '@playwright/test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
 const giftImageUrl = `/gift-images/${'a'.repeat(64)}`;
 const giftPng = Buffer.from(
@@ -20,6 +22,7 @@ async function startMock(request: APIRequestContext) {
     await change(request, 'POST', '/account', { source: 'mock' });
 }
 
+const archiveDirectory = mkdtempSync(join(tmpdir(), 'monitor-ui-'));
 let server: ChildProcess | undefined;
 async function startServer() {
     server = spawn(
@@ -40,6 +43,7 @@ async function startServer() {
             env: {
                 ...process.env,
                 MOCK_INTERVAL_SECONDS: '0.04',
+                ARCHIVE_PATH: join(archiveDirectory, 'monitor.sqlite3'),
                 COMMENT_HISTORY_SIZE: '30',
             },
             stdio: 'pipe',
@@ -71,7 +75,18 @@ async function stopServer() {
     }
 }
 test.beforeAll(startServer);
-test.afterAll(stopServer);
+test.afterAll(async () => {
+    await stopServer();
+    rmSync(archiveDirectory, { recursive: true });
+});
+
+async function tiktokOnly(page: Page) {
+    const controls = page.getByRole('group', { name: '댓글 보기' });
+    const summary = page.locator('.view-options > summary');
+    if (!(await controls.isVisible())) await summary.click();
+    await controls.getByText('TikTok', { exact: true }).click();
+    await summary.click();
+}
 
 for (const viewport of [
     { width: 1080, height: 1920 },
@@ -116,6 +131,7 @@ for (const viewport of [
             startBefore,
         );
         await page.getByRole('button', { name: '시작', exact: true }).click();
+        await tiktokOnly(page);
         await expect(page.locator('.comment')).toHaveCount(30);
         await expect(page.locator('.connection')).toHaveAttribute('data-state', 'connected');
         if (viewport.width === 720) {
@@ -181,6 +197,7 @@ test('backend restart returns to setup without reload and mock can start again',
 }) => {
     await startMock(request);
     await page.goto('/');
+    await tiktokOnly(page);
     await expect(page.locator('.comment')).toHaveCount(30);
     await stopServer();
     await expect(page.locator('.connection')).toHaveAttribute(
@@ -206,6 +223,17 @@ test('malformed frames are ignored and burst comments preserve order', async ({ 
     await page.routeWebSocket('**/ws', (socket) => {
         socket.send('{broken');
         socket.send(JSON.stringify({ type: 'status', state: 'unknown' }));
+        socket.send(
+            JSON.stringify({
+                type: 'status',
+                source: 'tiktok',
+                state: 'connected',
+                message: '',
+                session_id: 'burst',
+                username: 'host',
+                comment_history_size: 30,
+            }),
+        );
         for (let i = 0; i < 1000; i++) {
             socket.send(
                 JSON.stringify({
@@ -221,6 +249,7 @@ test('malformed frames are ignored and burst comments preserve order', async ({ 
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto('/');
+    await tiktokOnly(page);
     await expect(page.locator('.comment')).toHaveCount(30);
     await expect(page.locator('.comment').first()).toHaveAttribute('data-comment-id', '970');
     await expect(page.locator('.comment').last()).toHaveAttribute('data-comment-id', '999');
@@ -579,9 +608,11 @@ test('toolbar icons show accessible tooltips and reset every monitor', async ({
 }) => {
     await startMock(request);
     await page.goto('/');
+    await tiktokOnly(page);
     await expect(page.locator('.comment')).toHaveCount(30);
     const other = await context.newPage();
     await other.goto('/');
+    await tiktokOnly(other);
     await expect(other.locator('.comment')).toHaveCount(30);
     const change = page.getByRole('button', { name: '모니터 설정' });
     const reset = page.getByRole('button', { name: '모니터 종료 · 처음으로' });
@@ -633,6 +664,7 @@ test('toolbar icons show accessible tooltips and reset every monitor', async ({
 
     await reset.click();
     await expect(page.getByRole('alert')).toContainText('요청 응답을 받지 못했습니다');
+    await tiktokOnly(page);
     await expect(page.locator('.comment')).toHaveCount(30);
     await page.unroute('**/account');
     await page.unroute('**/refresh');
@@ -654,6 +686,7 @@ test('settings modal applies validated runtime values to all screens and cancels
     await startMock(request);
     await page.setViewportSize({ width: 720, height: 1280 });
     await page.goto('/');
+    await tiktokOnly(page);
     await expect(page.locator('.comment')).toHaveCount(30);
     const other = await context.newPage();
     await other.goto('/');
@@ -685,7 +718,10 @@ test('settings modal applies validated runtime values to all screens and cancels
     await page.screenshot({ path: 'test-results/settings-modal.png' });
     await dialog.getByRole('button', { name: '적용', exact: true }).click();
     await expect(dialog).toBeHidden();
-    for (const monitor of [page, other]) await expect(monitor.locator('.comment')).toHaveCount(7);
+    for (const monitor of [page, other]) {
+        await tiktokOnly(monitor);
+        await expect(monitor.locator('.comment')).toHaveCount(7);
+    }
     const after = await (await request.get('/config')).json();
     expect(after.comment_history_size).toBe(7);
     expect(after.comment_queue_size).toBe(20);
@@ -770,6 +806,7 @@ test('development proxy preserves origin for start, settings and refresh', async
         await dialog.getByLabel('목록 보관 수').fill('6');
         await dialog.getByRole('button', { name: '적용', exact: true }).click();
         await expect(dialog).toBeHidden();
+        await tiktokOnly(page);
         await expect(page.locator('.comment')).toHaveCount(6);
         const before = (await (await request.get('/config')).json()).session_id;
         await page.getByRole('button', { name: '댓글 비우기 · 다시 연결' }).click();
@@ -805,8 +842,22 @@ test('mock shows profiles, badges, activities and locally bundled Rose gifts', a
     await page.setViewportSize({ width: 720, height: 1280 });
     await page.route('**/demo-avatar-1.svg', (route) => route.fulfill({ status: 404, body: '' }));
     await page.goto('/');
-    await expect(page.locator('.live-metrics')).toContainText('시청자');
-    await expect(page.locator('.live-metrics')).not.toContainText('—');
+    await expect(page.locator('.live-metrics')).toHaveCount(2);
+    for (const platform of ['TikTok', 'YouTube']) {
+        const summary = page.getByRole('region', { name: `${platform} 방송 정보`, exact: true });
+        await expect(summary.locator('.demo-label')).toHaveText('DEMO');
+        await expect(summary.locator('.live-metrics dt')).toHaveText(['시청자', '좋아요']);
+        await expect(summary.locator('.live-metrics')).not.toContainText('—');
+    }
+    const chips = await page.locator('.demo-label').evaluateAll((nodes) =>
+        nodes.map((node) => {
+            const css = getComputedStyle(node);
+            return [css.backgroundColor, css.borderRadius, css.padding, css.fontSize];
+        }),
+    );
+    expect(chips[0]).toEqual(chips[1]);
+    const metrics = await page.locator('.live-metrics').allTextContents();
+    expect(metrics[0]).not.toBe(metrics[1]);
     await expect(page.locator('.user-badge[data-kind=fan]').first()).toContainText('Lv.');
     await expect(page.locator('.user-badge[data-kind=subscriber]').first()).toContainText('구독자');
     for (const kind of ['gift', 'follow', 'share', 'subscribe']) {
@@ -844,8 +895,9 @@ test('mock shows profiles, badges, activities and locally bundled Rose gifts', a
         )
         .toBe(true);
     await expect(page.locator('.avatar img[src="/demo-avatar-1.svg"]')).toHaveCount(0);
+    expect((await page.locator('.avatar img').first().boundingBox())!.height).toBeGreaterThan(0);
     await expect(page.locator('.avatar > span').first()).toBeAttached();
-    await expect(page.locator('.broadcast-state')).toHaveText('방송 중');
+    await expect(page.locator('[data-platform="tiktok"] .pane-header p')).toContainText('방송 중');
     await expect(page.locator('.connection')).toHaveText('서버 연결됨');
     await page.screenshot({ path: 'test-results/live-info-and-activities.png' });
     expect(externalRequests).toEqual([]);
@@ -996,7 +1048,7 @@ test('empty view follows server and broadcast states while existing comments rem
     });
     await expect(page.locator('.body')).toHaveText('유지할 댓글');
     send!({ ...status, live: { ...status.live, state: 'ended' } });
-    await expect(page.locator('.broadcast-state')).toHaveText('방송 종료');
+    await expect(page.locator('[data-platform="tiktok"] .pane-header p')).toHaveText('방송 종료');
     await expect(page.locator('.body')).toHaveText('유지할 댓글');
 });
 
@@ -1110,6 +1162,7 @@ test('viewport resizing follows the latest feed without moving a reader', async 
     const viewport = page.locator('.comment-viewport');
     const gap = () =>
         viewport.evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop);
+    await tiktokOnly(page);
     await expect(page.locator('.comment')).toHaveCount(30);
     await expect.poll(gap).toBeLessThanOrEqual(1);
     await page.setViewportSize({ width: 720, height: 800 });
@@ -1153,7 +1206,7 @@ test('upward input on a short feed keeps following until there is room to read',
     });
     await page.setViewportSize({ width: 720, height: 800 });
     await page.goto('/');
-    const viewport = page.getByRole('region', { name: '실시간 댓글과 활동', exact: true });
+    const viewport = page.getByRole('region', { name: 'TikTok 실시간 댓글과 활동', exact: true });
     const controls = page.locator('.reading-controls');
     const gap = () =>
         viewport.evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop);
@@ -1216,9 +1269,9 @@ test('reading mode preserves its anchor, bounds unread items and resets across q
     });
     await page.setViewportSize({ width: 720, height: 1280 });
     await page.goto('/');
-    await expect(page.locator('.broadcast-state')).toHaveText('방송 중');
+    await expect(page.locator('[data-platform="tiktok"] .pane-header p')).toHaveText('방송 중');
     batch(0, 30);
-    const viewport = page.getByRole('region', { name: '실시간 댓글과 활동', exact: true });
+    const viewport = page.getByRole('region', { name: 'TikTok 실시간 댓글과 활동', exact: true });
     const rows = page.locator('.comment');
     const controls = page.locator('.reading-controls');
     const bottomGap = () =>
@@ -1664,4 +1717,424 @@ test('gift sentences keep plain names and formatted counts when images are missi
         await expect(missing.locator('.body')).toHaveText(`${longName} 1,000개를 보냈어요`);
     }
     expect(errors).toEqual([]);
+});
+
+for (const width of [1080, 720, 320]) {
+    test(`simulcast has five local views and independent platform state at ${width}px`, async ({
+        page,
+    }) => {
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        await page.setViewportSize({
+            width,
+            height: width === 1080 ? 1920 : width === 720 ? 1280 : 844,
+        });
+        if (width === 320) {
+            await page.addInitScript(() => localStorage.setItem('monitor-font-scale', '200'));
+        }
+        let connections = 0;
+        let mutations = 0;
+        let send: (message: object) => void;
+        const status = {
+            type: 'status',
+            source: 'tiktok',
+            state: 'connected',
+            message: '',
+            session_id: 'simulcast',
+            username: 'live_host',
+            comment_history_size: 30,
+            live: { state: 'live', viewers: 128, likes: 1200 },
+            youtube: {
+                video_id: 'abcdefghijk',
+                state: 'connected',
+                message: '',
+                live: { state: 'live', viewers: 456, likes: 789 },
+            },
+        };
+        const messages = Array.from({ length: 40 }, (_, index) => ({
+            type: 'comment',
+            platform: index % 2 ? 'youtube' : 'tiktok',
+            id: `simulcast-${index}`,
+            received_at: '2026-11-05T12:00:00Z',
+            user: {
+                nickname: ['민수', '지연', '서연'][Math.floor(index / 2) % 3],
+                unique_id: `viewer-${Math.floor(index / 2) % 3}`,
+                avatar_url: `/demo-avatar-${Math.floor(index / 2) % 3}.svg`,
+            },
+            comment:
+                index % 2
+                    ? 'YouTube에서도 함께 보고 있어요! 반가워요 💚'
+                    : '오늘 방송도 잘 보고 있어요. 응원합니다! 👋',
+        }));
+        page.on('request', (request) => {
+            if (['POST', 'PATCH', 'DELETE'].includes(request.method())) mutations++;
+        });
+        await page.routeWebSocket('**/ws', (socket) => {
+            connections++;
+            send = (message) => socket.send(JSON.stringify(message));
+            send(status);
+            messages.forEach(send);
+        });
+        await page.goto('/');
+        const controls = page.getByRole('group', { name: '댓글 보기', includeHidden: true });
+        const summary = page.locator('.view-options > summary');
+        const select = async (label: string) => {
+            if (!(await controls.isVisible())) await summary.click();
+            await controls.getByText(label, { exact: true }).click();
+            await expect(summary).toContainText(label);
+            await summary.click();
+            await expect(controls).toBeHidden();
+        };
+        await expect(controls).toBeHidden();
+        await expect(summary).toContainText('상하 분할');
+        await summary.focus();
+        await page.keyboard.press('Enter');
+        await expect(controls).toBeVisible();
+        await expect(controls.getByRole('radio', { name: '상하 분할', exact: true })).toBeChecked();
+        for (const label of ['상하 분할', '좌우 분할']) {
+            expect(
+                await controls.getByText(label, { exact: true }).evaluate((node) => {
+                    const text = [...node.childNodes].find(
+                        (child) =>
+                            child.nodeType === Node.TEXT_NODE &&
+                            child.textContent?.includes('분할'),
+                    );
+                    if (!text) return false;
+                    const range = document.createRange();
+                    range.selectNodeContents(text);
+                    const rects = [...range.getClientRects()].filter((rect) => rect.width > 0);
+                    const bounds = node.getBoundingClientRect();
+                    return (
+                        rects.length === 1 &&
+                        rects[0].left >= bounds.left &&
+                        rects[0].right <= bounds.right
+                    );
+                }),
+            ).toBe(true);
+        }
+        await page.screenshot({ path: `/tmp/view-options-${width}.png`, animations: 'disabled' });
+        await page.keyboard.press('Space');
+        await expect(controls).toBeHidden();
+        const tiktok = page.getByRole('region', { name: 'TikTok 댓글 영역', exact: true });
+        const youtube = page.getByRole('region', { name: 'YouTube 댓글 영역', exact: true });
+        await expect(tiktok.locator('.comment')).toHaveCount(20);
+        await expect(youtube.locator('.comment')).toHaveCount(20);
+        await expect(tiktok.locator('.live-metrics strong')).toHaveText(['128', '1,200']);
+        await expect(youtube.locator('.live-metrics strong')).toHaveText(['456', '789']);
+        await expect(page.locator('.demo-label')).toHaveCount(0);
+        send!({
+            ...status,
+            youtube: { ...status.youtube, live: { state: 'live', viewers: null, likes: 0 } },
+        });
+        await expect(youtube.locator('.live-metrics strong')).toHaveText(['—', '0']);
+        await expect(tiktok.locator('.live-metrics strong')).toHaveText(['128', '1,200']);
+        send!(status);
+        await expect(youtube.locator('.live-metrics strong')).toHaveText(['456', '789']);
+        const top = await tiktok.boundingBox();
+        const bottom = await youtube.boundingBox();
+        expect(top!.y + top!.height).toBeLessThan(bottom!.y);
+        expect(Math.abs(top!.height - bottom!.height)).toBeLessThan(2);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+            true,
+        );
+        const ids = await page
+            .locator('[aria-describedby]')
+            .evaluateAll((nodes) =>
+                nodes
+                    .filter((node) => node.classList.contains('comment-viewport'))
+                    .map((node) => node.getAttribute('aria-describedby')),
+            );
+        expect(new Set(ids).size).toBe(2);
+        if (width !== 320)
+            await page.screenshot({
+                path: `/tmp/youtube-split-${width}.png`,
+                animations: 'disabled',
+            });
+        await select('좌우 분할');
+        await expect(page.getByRole('separator')).toHaveAttribute('aria-orientation', 'vertical');
+        const left = (await tiktok.boundingBox())!;
+        const right = (await youtube.boundingBox())!;
+        expect(left.x + left.width).toBeLessThan(right.x);
+        expect(Math.abs(left.width - right.width)).toBeLessThan(2);
+        expect(Math.abs(left.height - right.height)).toBeLessThan(2);
+        expect(
+            await page
+                .locator('.comment-viewport')
+                .evaluateAll((nodes) =>
+                    nodes.every((node) => node.scrollWidth <= node.clientWidth),
+                ),
+        ).toBe(true);
+        await page.screenshot({
+            path: `/tmp/youtube-columns-${width}.png`,
+            animations: 'disabled',
+        });
+        await select('상하 분할');
+        await select('통합');
+        await expect(
+            page
+                .getByRole('region', { name: 'YouTube 방송 정보', exact: true })
+                .locator('.live-metrics strong'),
+        ).toHaveText(['456', '789']);
+        await expect(
+            page
+                .getByRole('region', { name: 'TikTok 방송 정보', exact: true })
+                .locator('.live-metrics strong'),
+        ).toHaveText(['128', '1,200']);
+        await expect(page.locator('.comment')).toHaveCount(30);
+        await expect(page.locator('.platform-label')).toHaveCount(30);
+        expect(
+            await page
+                .locator('.comment-viewport')
+                .evaluate((node) => node.scrollWidth <= node.clientWidth),
+        ).toBe(true);
+        expect(
+            await page
+                .locator('.comment')
+                .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-comment-id'))),
+        ).toEqual(messages.slice(-30).map((message) => message.id));
+        // The same viewer ID on two platforms must not collapse the author row.
+        await expect(page.locator('.comment.continued')).toHaveCount(0);
+        if (width === 1080) {
+            await page.screenshot({
+                path: '/tmp/youtube-combined-1080.png',
+                animations: 'disabled',
+            });
+        }
+        await select('TikTok');
+        await expect(page.locator('.comment')).toHaveCount(20);
+        await expect(page.locator('.comment[data-platform="youtube"]')).toHaveCount(0);
+        send!({ ...messages[1], id: 'hidden-youtube', comment: '숨겨져 있어도 계속 수신합니다.' });
+        await select('YouTube');
+        await expect(page.locator('.comment')).toHaveCount(21);
+        await expect(page.locator('.live-metrics strong')).toHaveText(['456', '789']);
+        await expect(page.locator('[data-comment-id="hidden-youtube"]')).toBeAttached();
+        send!({
+            ...status,
+            youtube: { ...status.youtube, state: 'error', message: 'YouTube 연결을 확인해주세요.' },
+        });
+        await expect(
+            controls.getByRole('radio', { name: 'YouTube', exact: true, includeHidden: true }),
+        ).toBeChecked();
+        await expect(page.locator('.pane-header')).toContainText('YouTube 연결을 확인해주세요.');
+        await expect(page.locator('.live-metrics')).toHaveClass(/stale/);
+        await expect(page.locator('.comment')).toHaveCount(21);
+        await select('상하 분할');
+        await expect(tiktok.locator('.comment')).toHaveCount(20);
+        await expect(tiktok.locator('.pane-header')).toContainText('방송 중');
+        await expect(tiktok.locator('.live-metrics')).not.toHaveClass(/stale/);
+        send!({ ...status, session_id: 'tiktok-next', youtube: null });
+        await expect(summary).toContainText('TikTok');
+        await expect(tiktok).toBeVisible();
+        await expect(youtube).toHaveCount(0);
+        await expect(page.locator('.comment')).toHaveCount(0);
+        send!({ ...status, session_id: 'simulcast-next' });
+        await expect(summary).toContainText('상하 분할');
+        await expect(tiktok).toBeVisible();
+        await expect(youtube).toBeVisible();
+        expect(connections).toBe(1);
+        expect(mutations).toBe(0);
+    });
+}
+
+test('split feeds scroll and resize independently without changing receivers or history', async ({
+    page,
+}) => {
+    await page.setViewportSize({ width: 720, height: 1280 });
+    let connections = 0;
+    let mutations = 0;
+    let send: (platform: 'tiktok' | 'youtube', index: number) => void;
+    let sendStatus: (sessionId?: string) => void;
+    page.on('request', (request) => {
+        if (['POST', 'PATCH', 'DELETE'].includes(request.method())) mutations++;
+    });
+    await page.routeWebSocket('**/ws', (socket) => {
+        connections++;
+        sendStatus = (sessionId = 'split-reading') =>
+            socket.send(
+                JSON.stringify({
+                    type: 'status',
+                    source: 'mock',
+                    state: 'connected',
+                    message: '',
+                    session_id: sessionId,
+                    username: null,
+                    comment_history_size: 30,
+                    youtube: { video_id: 'demo', state: 'connected', message: '' },
+                }),
+            );
+        sendStatus();
+        send = (platform, index) =>
+            socket.send(
+                JSON.stringify({
+                    type: 'comment',
+                    platform,
+                    id: `${platform}-${index}`,
+                    received_at: '2026-11-05T12:00:00Z',
+                    user: { nickname: `시청자 ${index}`, unique_id: String(index) },
+                    comment: `댓글 ${index} · 긴 댓글도 각 플랫폼에서 독립적으로 읽을 수 있습니다.`,
+                }),
+            );
+        for (let index = 0; index < 30; index++) {
+            send('tiktok', index);
+            send('youtube', index);
+        }
+    });
+    await page.goto('/');
+    const tiktok = page.getByRole('region', { name: 'TikTok 댓글 영역', exact: true });
+    const youtube = page.getByRole('region', { name: 'YouTube 댓글 영역', exact: true });
+    await expect(tiktok.locator('.comment')).toHaveCount(30);
+    await expect(youtube.locator('.comment')).toHaveCount(30);
+    const tiktokScroll = tiktok.locator('.comment-viewport');
+    const youtubeScroll = youtube.locator('.comment-viewport');
+    await tiktokScroll.focus();
+    await page.keyboard.press('PageUp');
+    await expect(tiktok.getByRole('button', { name: '최신 댓글로' })).toBeVisible();
+    await expect(youtube.getByRole('button', { name: '최신 댓글로' })).toHaveCount(0);
+    send!('youtube', 30);
+    await expect(youtube.locator('.comment').last()).toHaveAttribute(
+        'data-comment-id',
+        'youtube-30',
+    );
+    await expect
+        .poll(() =>
+            youtubeScroll.evaluate((node) =>
+                Math.abs(node.scrollHeight - node.clientHeight - node.scrollTop),
+            ),
+        )
+        .toBeLessThanOrEqual(1);
+    await expect(tiktok.getByRole('button', { name: '최신 댓글로' })).toBeVisible();
+    const quietIds = await youtube
+        .locator('.comment')
+        .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-comment-id')));
+    for (let index = 30; index < 200; index++) send!('tiktok', index);
+    await expect(tiktok.locator('.comment').last()).toHaveAttribute(
+        'data-comment-id',
+        'tiktok-199',
+    );
+    expect(
+        await youtube
+            .locator('.comment')
+            .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-comment-id'))),
+    ).toEqual(quietIds);
+    await expect(page.locator('.comment')).toHaveCount(60);
+
+    const divider = page.getByRole('separator', { name: 'TikTok·YouTube 영역 크기 조절' });
+    await expect(divider).toHaveAttribute('aria-orientation', 'horizontal');
+    await expect(divider).toHaveAttribute('aria-valuemin', '20');
+    await expect(divider).toHaveAttribute('aria-valuemax', '80');
+    await expect(divider).toHaveAttribute('aria-valuenow', '50');
+    const before = [await tiktok.boundingBox(), await youtube.boundingBox()];
+    const history = await page
+        .locator('.comment')
+        .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-comment-id')));
+    const drag = async (distance: number, horizontal = false) => {
+        const bounds = (await divider.boundingBox())!;
+        const x = bounds.x + bounds.width / 2;
+        const y = bounds.y + bounds.height / 2;
+        await page.mouse.move(x, y);
+        await page.mouse.down();
+        await page.mouse.move(x + (horizontal ? distance : 0), y + (horizontal ? 0 : distance), {
+            steps: 5,
+        });
+        await page.mouse.up();
+    };
+    await drag(150);
+    const after = [await tiktok.boundingBox(), await youtube.boundingBox()];
+    expect(after[0]!.height).toBeGreaterThan(before[0]!.height + 100);
+    expect(after[1]!.height).toBeLessThan(before[1]!.height - 100);
+    expect(
+        Math.abs(after[0]!.height + after[1]!.height - before[0]!.height - before[1]!.height),
+    ).toBeLessThan(2);
+    const released = await divider.getAttribute('aria-valuenow');
+    await page.mouse.move(360, 200);
+    await expect(divider).toHaveAttribute('aria-valuenow', released!);
+    await drag(-150);
+    expect((await tiktok.boundingBox())!.height).toBeLessThan(after[0]!.height - 100);
+    await drag(2000);
+    await expect(divider).toHaveAttribute('aria-valuenow', '80');
+    await drag(-2000);
+    await expect(divider).toHaveAttribute('aria-valuenow', '20');
+    await divider.focus();
+    await page.keyboard.press('ArrowUp');
+    await expect(divider).toHaveAttribute('aria-valuenow', '20');
+    await page.keyboard.press('ArrowDown');
+    await expect(divider).toHaveAttribute('aria-valuenow', '25');
+    await page.keyboard.press('End');
+    await page.keyboard.press('ArrowDown');
+    await expect(divider).toHaveAttribute('aria-valuenow', '80');
+    await page.keyboard.press('Home');
+    await expect(divider).toHaveAttribute('aria-valuenow', '20');
+    await divider.dblclick();
+    await expect(divider).toHaveAttribute('aria-valuenow', '50');
+    await divider.focus();
+    for (let step = 0; step < 3; step++) await page.keyboard.press('ArrowDown');
+    await expect(divider).toHaveAttribute('aria-valuenow', '65');
+    const select = async (label: string) => {
+        await page.locator('.view-options > summary').click();
+        await page
+            .getByRole('group', { name: '댓글 보기' })
+            .getByText(label, { exact: true })
+            .click();
+        await page.locator('.view-options > summary').click();
+    };
+    for (const label of ['TikTok', '통합']) {
+        await select(label);
+        await expect(divider).toHaveCount(0);
+        sendStatus!();
+        await select('상하 분할');
+        await expect(divider).toHaveAttribute('aria-valuenow', '65');
+    }
+    await select('좌우 분할');
+    await expect(divider).toHaveAttribute('aria-orientation', 'vertical');
+    await expect(divider).toHaveAttribute('aria-valuenow', '65');
+    const widths = [(await tiktok.boundingBox())!.width, (await youtube.boundingBox())!.width];
+    await drag(-100, true);
+    expect((await tiktok.boundingBox())!.width).toBeLessThan(widths[0] - 90);
+    expect((await youtube.boundingBox())!.width).toBeGreaterThan(widths[1] + 90);
+    const horizontalReleased = await divider.getAttribute('aria-valuenow');
+    await page.mouse.move(360, 200);
+    await expect(divider).toHaveAttribute('aria-valuenow', horizontalReleased!);
+    await divider.focus();
+    await page.keyboard.press('Home');
+    await page.keyboard.press('ArrowRight');
+    await expect(divider).toHaveAttribute('aria-valuenow', '25');
+    await page.keyboard.press('ArrowLeft');
+    await expect(divider).toHaveAttribute('aria-valuenow', '20');
+    await page.keyboard.press('End');
+    await expect(divider).toHaveAttribute('aria-valuenow', '80');
+    await divider.dblclick();
+    await expect(divider).toHaveAttribute('aria-valuenow', '50');
+    for (let step = 0; step < 3; step++) await page.keyboard.press('ArrowRight');
+    await expect(divider).toHaveAttribute('aria-valuenow', '65');
+    await page.screenshot({ path: '/tmp/split-columns-720.png', animations: 'disabled' });
+    await select('상하 분할');
+    await expect(divider).toHaveAttribute('aria-valuenow', '65');
+    expect(
+        await page
+            .locator('.comment')
+            .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-comment-id'))),
+    ).toEqual(history);
+    await page.screenshot({ path: '/tmp/split-divider-720.png', animations: 'disabled' });
+    await page.setViewportSize({ width: 320, height: 844 });
+    await expect(divider).toHaveAttribute('aria-valuenow', '65');
+    const handle = (await divider.boundingBox())!;
+    expect(handle.height).toBeGreaterThanOrEqual(44);
+    expect(handle.x).toBeGreaterThanOrEqual(0);
+    expect(handle.x + handle.width).toBeLessThanOrEqual(320);
+    expect(
+        await page.evaluate(
+            () =>
+                document.documentElement.scrollWidth <= innerWidth &&
+                [...document.querySelectorAll('.comment-viewport')].every(
+                    (node) => node.scrollWidth <= node.clientWidth && node.clientHeight > 0,
+                ),
+        ),
+    ).toBe(true);
+    await drag(-40);
+    expect(Number(await divider.getAttribute('aria-valuenow'))).toBeLessThan(65);
+    await page.screenshot({ path: '/tmp/split-divider-320.png', animations: 'disabled' });
+    sendStatus!('split-next');
+    await expect(divider).toHaveAttribute('aria-valuenow', '50');
+    await expect(page.locator('.comment')).toHaveCount(0);
+    expect(connections).toBe(1);
+    expect(mutations).toBe(0);
 });

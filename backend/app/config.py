@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,3 +30,4 @@ class Settings(RuntimeSettings, BaseSettings):
     port: int = Field(default=8000, ge=1, le=65535)
     static_dir: Path = ROOT / "frontend" / "build"
     archive_path: Path = ROOT / "data" / "monitor.sqlite3"
+    youtube_api_key: SecretStr = Field(default=SecretStr(""), repr=False)

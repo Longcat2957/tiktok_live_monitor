@@ -20,7 +20,9 @@
 </script>
 
 {#if actionError}<p class="action-error" role="alert">{actionError}</p>
-{:else if source?.state === 'error'}<p class="action-error" role="status">{source.message}</p>{/if}
+{:else if source?.state === 'error'}
+    <p class="action-error" role="status">{source.youtube ? 'TikTok · ' : ''}{source.message}</p>
+{/if}
 {#if recoveryMessage}
     <div class="recovery-notice">
         <p role="status">{recoveryMessage}</p>

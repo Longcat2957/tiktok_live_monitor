@@ -40,3 +40,40 @@ def test_source_sink_bounds_queue_counts_drops_and_rate_limits_logs(caplog):
     sink.active = False
     sink.publish(Comment(user=User(nickname="n", unique_id="u"), comment="late"))
     assert queue.empty()
+
+
+async def test_demo_updates_distinct_metrics_for_both_platforms_each_cycle():
+    from app.schemas.events import YouTubeStatus
+
+    queue = asyncio.Queue(20)
+    manager = WebSocketBroadcaster(
+        Status(
+            source="mock",
+            state="connecting",
+            message="test",
+            youtube=YouTubeStatus(video_id="demo", state="connecting", message="test"),
+        )
+    )
+    source = DemoStream(
+        EventSink(queue, manager),
+        0.001,
+        count(),
+        EventSink(queue, manager, platform="youtube"),
+    )
+    task = asyncio.create_task(source.run())
+    try:
+        youtube_comments = 0
+        async with asyncio.timeout(1):
+            while youtube_comments < 2:
+                event = await queue.get()
+                queue.task_done()
+                if event.platform == "youtube":
+                    youtube_comments += 1
+        assert manager.status.live.viewers == 129 and manager.status.live.likes == 1217
+        assert (
+            manager.status.youtube.live.viewers == 65 and manager.status.youtube.live.likes == 487
+        )
+        assert manager.status.youtube.live.state == "live"
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

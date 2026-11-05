@@ -199,3 +199,55 @@ def test_http_and_websocket_origin_checks():
             socket.send_bytes(b"not a command")
             assert socket.receive()["type"] == "websocket.close"
         assert current(client) == sid
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        " abcdefghijk ",
+        "https://www.youtube.com/watch?v=abcdefghijk&feature=share",
+        "https://youtube.com/live/abcdefghijk?si=example",
+        "https://m.youtube.com/watch?v=abcdefghijk",
+        "https://youtu.be/abcdefghijk?t=1",
+    ],
+)
+def test_youtube_input_normalizes_to_video_id(value):
+    account = AccountInput(session_id="test", username="valid", youtube_video_id=value)
+    assert account.youtube_video_id == "abcdefghijk"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://evil.test/watch?v=abcdefghijk",
+        "https://youtube.com.evil.test/watch?v=abcdefghijk",
+        "https://youtube.com@evil.test/watch?v=abcdefghijk",
+        "https://youtube.com:8443/watch?v=abcdefghijk",
+        "http://youtube.com/watch?v=abcdefghijk",
+        "https://youtube.com/watch?v=abcdefghijk&v=01234567890",
+        "https://youtube.com/@channel/live",
+        "https://youtu.be/abcdefghijk/extra",
+        "https://youtube.com/watch?v=too-short",
+        "abcdefghijk/../../secret",
+    ],
+)
+def test_youtube_input_rejects_unsupported_urls_and_ids(value):
+    with pytest.raises(ValueError):
+        AccountInput(session_id="test", username="valid", youtube_video_id=value)
+
+
+def test_youtube_key_is_not_exposed_as_runtime_settings_or_status():
+    settings = Settings(_env_file=None, youtube_api_key="private-test-api-key")
+    assert "private-test-api-key" not in repr(settings)
+    app = create_app(settings)
+    with TestClient(app, base_url="http://localhost") as client:
+        for path in ["/config", "/health"]:
+            response = client.get(path)
+            assert response.status_code == 200
+            assert "youtube_api_key" not in response.text
+            assert "private-test-api-key" not in response.text
+        assert change(client, "POST", "/account", source="mock").status_code == 200
+        assert (
+            change(client, "PATCH", "/config", settings={"youtube_api_key": "changed"}).status_code
+            == 422
+        )

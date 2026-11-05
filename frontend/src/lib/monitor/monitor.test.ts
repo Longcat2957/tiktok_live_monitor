@@ -14,6 +14,7 @@ const status = (session_id = 'first'): StatusMessage => ({
 });
 const comment = (id: string): CommentMessage => ({
     type: 'comment',
+    platform: 'tiktok',
     id,
     received_at: '2026-09-12T10:30:00Z',
     user: { nickname: 'name', unique_id: 'user' },
@@ -68,11 +69,21 @@ it('batches ordered bounded history per instance and clears old frames at sessio
     expect(first.comments.map((item) => item.id)).toEqual(['98', '99']);
     expect(second.comments).toEqual([]);
 
+    socket.send({ ...comment('youtube'), platform: 'youtube' });
+    for (let i = 100; i < 200; i++) socket.send(comment(String(i)));
+    flush();
+    expect(first.comments.map((item) => item.id)).toEqual(['youtube', '198', '199']);
+    socket.send({
+        ...status(),
+        youtube: { video_id: 'abcdefghijk', state: 'disconnected', message: '재연결 중' },
+    });
+    expect(first.comments.map((item) => item.id)).toEqual(['youtube', '198', '199']);
+
     socket.onclose?.();
     vi.advanceTimersByTime(1000);
     const reconnected = Socket.instances[2];
     reconnected.send(status());
-    expect(first.comments.map((item) => item.id)).toEqual(['98', '99']);
+    expect(first.comments.map((item) => item.id)).toEqual(['youtube', '198', '199']);
     reconnected.send(comment('old pending'));
     reconnected.send(status('second'));
     expect(frames.size).toBe(0);
@@ -83,6 +94,25 @@ it('batches ordered bounded history per instance and clears old frames at sessio
     expect(reconnected.close).toHaveBeenCalledOnce();
     stopSecond();
     expect(vi.getTimerCount()).toBe(0);
+});
+
+it('sends optional YouTube input with the existing guarded start command', async () => {
+    const fetcher = vi.fn(async () => Response.json({}));
+    vi.stubGlobal('fetch', fetcher);
+    const commands = new MonitorCommands(() => status());
+    await commands.start('tiktok', '@host', 'https://youtu.be/abcdefghijk');
+    expect(fetcher).toHaveBeenCalledWith(
+        '/account',
+        expect.objectContaining({
+            body: JSON.stringify({
+                session_id: 'first',
+                source: 'tiktok',
+                username: '@host',
+                youtube_video_id: 'https://youtu.be/abcdefghijk',
+            }),
+        }),
+    );
+    commands.dispose();
 });
 
 it('blocks uncertain writes and polls without changing the WebSocket-owned session', async () => {

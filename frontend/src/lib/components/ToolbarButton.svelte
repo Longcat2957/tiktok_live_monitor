@@ -20,7 +20,7 @@
 <div class="toolbar-action">
     <Button
         variant="outlined"
-        size="m"
+        size="s"
         iconType="full"
         aria-label={label}
         aria-describedby={tooltipId}
@@ -40,6 +40,17 @@
 <style>
     .toolbar-action {
         position: relative;
+    }
+    .toolbar-action :global(button) {
+        width: 44px;
+        height: 44px;
+        min-width: 44px;
+        min-height: 44px;
+        padding: 0;
+    }
+    .toolbar-action :global(svg) {
+        width: 22px;
+        height: 22px;
     }
     .action-tooltip {
         position: absolute;

@@ -2,25 +2,34 @@
     import { onMount, tick } from 'svelte';
     import AccountSetup from '$lib/components/AccountSetup.svelte';
     import BuildVersion from '$lib/components/BuildVersion.svelte';
-    import CommentList from '$lib/components/CommentList.svelte';
     import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
-    import LiveSummary from '$lib/components/LiveSummary.svelte';
+    import MonitorFeeds from '$lib/components/MonitorFeeds.svelte';
     import MonitorHeader from '$lib/components/MonitorHeader.svelte';
     import RequestFeedback from '$lib/components/RequestFeedback.svelte';
     import SettingsDialog from '$lib/components/SettingsDialog.svelte';
     import { MonitorCommands } from '$lib/monitor/commands.svelte.js';
     import { MonitorSession } from '$lib/monitor/session.svelte.js';
     import { monitorView } from '$lib/monitor-state';
+    import type { FeedLayout } from '$lib/types';
 
     const session = new MonitorSession();
     const commands = new MonitorCommands(() => session.source);
     let fontScale = $state(100);
+    let layout = $state<FeedLayout>('split');
+    let layoutSession: string | undefined;
     let editing = $state(false);
     let header = $state<{ focus(): void }>();
     let setupPanel = $state<{ focus(): void }>();
     let showSetup = $derived(session.source?.state === 'idle');
     let view = $derived(monitorView(session.backend, session.source));
     let previousSetup: boolean | undefined;
+
+    $effect(() => {
+        if (session.source && session.source.session_id !== layoutSession) {
+            layoutSession = session.source.session_id;
+            layout = session.source.youtube ? 'split' : 'tiktok';
+        }
+    });
 
     $effect(() => {
         if (!session.source || commands.blocked || editing) return;
@@ -48,7 +57,7 @@
 </script>
 
 <svelte:head
-    ><title>TikTok LIVE · 댓글 모니터</title><meta
+    ><title>LIVE · 댓글 모니터</title><meta
         name="description"
         content="실시간 LIVE 댓글 모니터"
     /></svelte:head
@@ -60,13 +69,11 @@
         active={Boolean(session.source && !showSetup)}
         blocked={commands.blocked}
         bind:fontScale
+        bind:layout
         onsettings={() => (editing = true)}
         onrefresh={() => void updateMonitor('refresh')}
         onstop={() => void updateMonitor('stop')}
     />
-    {#if session.source && !showSetup}
-        <LiveSummary source={session.source} backend={session.backend} />
-    {/if}
     <RequestFeedback
         actionError={commands.actionError}
         source={session.source}
@@ -82,28 +89,27 @@
             blocked={commands.blocked}
             saving={commands.saving}
             backend={session.backend}
-            onstart={(mode, account) => commands.start(mode, account)}
+            onstart={(mode, account, youtubeVideo) => commands.start(mode, account, youtubeVideo)}
         />
-    {:else if session.comments.length === 0}
+    {:else if session.source}
+        {#key session.source.session_id}
+            <MonitorFeeds
+                source={session.source}
+                backend={session.backend}
+                comments={session.comments}
+                {fontScale}
+                {layout}
+            />
+        {/key}
+    {:else}
         <section class="empty" data-state={view.kind} role="status">
             <span class="eyebrow">LIVE MONITOR</span>
             <h1>{view.title}</h1>
             <p>{view.description}</p>
         </section>
     {/if}
-    {#if !showSetup && session.comments.length > 0}
-        {#key session.source?.session_id}<CommentList
-                comments={session.comments}
-                {fontScale}
-            />{/key}
-    {/if}
     <footer>
         <div class="footer-info">
-            {#if !showSetup}
-                <p class="broadcast-state" data-state={view.tone} role="status" title={view.label}>
-                    {view.label}
-                </p>
-            {/if}
             <BuildVersion />
         </div>
         <ConnectionStatus backend={session.backend} />
@@ -125,8 +131,8 @@
         height: 100dvh;
         display: flex;
         flex-direction: column;
-        padding: clamp(20px, 4vw, 48px);
-        gap: 24px;
+        padding: clamp(12px, 2vw, 24px);
+        gap: 10px;
     }
     .empty {
         flex: 1;
@@ -162,7 +168,7 @@
         gap: 16px;
         flex-shrink: 0;
         border-top: 1px solid var(--m3c-outline-variant);
-        padding-top: 16px;
+        padding-top: 8px;
     }
     .footer-info {
         flex: 1;
@@ -170,23 +176,5 @@
         display: flex;
         flex-direction: column;
         gap: 4px;
-    }
-    .broadcast-state {
-        min-width: 0;
-        margin: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        font-size: clamp(12px, 1.7vw, 20px);
-        color: var(--m3c-on-surface-variant);
-    }
-    .broadcast-state[data-state='live'] {
-        color: var(--m3c-secondary);
-    }
-    .broadcast-state[data-state='waiting'] {
-        color: var(--monitor-waiting);
-    }
-    .broadcast-state[data-state='error'] {
-        color: var(--m3c-error);
     }
 </style>

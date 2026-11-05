@@ -16,7 +16,7 @@ cd tiktok_live_monitor
 
 `http://127.0.0.1:8000`에서 **실제 방송** 또는 **데모 체험**을 선택하고 시작합니다. 공개 Docker Hub 이미지를 사용하며 `.env`가 없으면 기본 파일을 생성합니다. Pi 64-bit에는 ARM64 이미지가 선택됩니다.
 
-YouTube 동시 수신은 서버 `.env`에 `YOUTUBE_API_KEY`를 설정하고 첫 화면에 YouTube 방송 주소 또는 영상 ID를 추가합니다. TikTok 단독 사용과 데모에는 키가 필요 없습니다. 설정 방법은 [YouTube 동시 수신](docs/reference.md#youtube-동시-수신)을 참고하세요. 이 기능 브랜치의 변경을 실행하려면 `./scripts/start.sh --build`로 현재 소스를 빌드합니다.
+YouTube 동시 수신은 서버 `.env`에 `YOUTUBE_API_KEY=발급받은키`를 추가하고 첫 화면에 YouTube 방송 주소 또는 영상 ID를 입력합니다. 최신 설정 예제는 [`.env.example`](.env.example)입니다. 업데이트는 기존 `.env`를 보존하므로 새 항목은 직접 추가해야 합니다. 키를 추가한 뒤 `docker compose up -d --wait`로 적용합니다. TikTok 단독 사용과 데모에는 키가 필요 없습니다. 설정 방법은 [YouTube 동시 수신](docs/reference.md#youtube-동시-수신)을 참고하세요.
 
 실방송 YouTube 댓글·진단은 SQLite에 최대 30일 보관한 뒤 만료 처리합니다. TikTok·데모 기록에는 자동 삭제를 적용하지 않습니다.
 

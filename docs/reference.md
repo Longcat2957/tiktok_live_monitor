@@ -75,8 +75,8 @@ CI를 건너뛴 문서·스크립트 커밋에는 새 이미지가 없습니다.
 실제 방송 입력에서 TikTok 계정과 함께 YouTube 방송 주소 또는 11자리 영상 ID를 입력합니다. YouTube 입력은 선택 사항입니다. 방송마다 영상 ID가 달라질 수 있으므로 채널 주소 대신 현재 방송 주소를 사용합니다. 주소에서 ID만 추출하고 입력한 URL을 직접 열거나 리다이렉트를 따라가지 않습니다.
 
 1. Google Cloud 프로젝트에서 **YouTube Data API v3**를 활성화하고 API 키를 만듭니다. API 제한은 YouTube Data API v3로 설정합니다.
-2. 서버의 `.env`에 `YOUTUBE_API_KEY=발급받은키`를 설정합니다. 브라우저용 HTTP referrer 제한 키가 아닌 서버에서 사용할 수 있는 키가 필요합니다.
-3. 개발 서버를 다시 실행하거나 Docker 컨테이너를 다시 생성합니다. 이 브랜치의 소스를 실행할 때는 `./scripts/start.sh --build`를 사용합니다.
+2. 서버의 `.env`에 `YOUTUBE_API_KEY=발급받은키`를 설정합니다. 최신 설정 예제 `.env.example`의 키는 빈 값입니다. 기존 `.env`는 업데이트해도 자동으로 바뀌지 않으므로 이 항목을 직접 추가합니다. 브라우저용 HTTP referrer 제한 키가 아닌 서버에서 사용할 수 있는 키가 필요합니다.
+3. 개발 서버를 다시 실행하거나 Docker에서 `docker compose up -d --wait`로 변경된 설정을 적용합니다. 앱 업데이트는 `./scripts/update.sh`를 사용합니다.
 4. 첫 화면에서 TikTok 계정과 YouTube 방송 주소를 입력하고 시작합니다. 키는 화면·`/config`·WebSocket·SQLite에 전달하지 않습니다.
 
 `videos.list`로 방송의 활성 채팅 ID를 얻고 공식 `liveChatMessages.streamList`의 gRPC 연결로 일반 텍스트 채팅을 받습니다. [Google의 공식 인증·스트리밍 가이드](https://developers.google.com/youtube/data/live/streaming-live-chat)를 사용합니다. YouTube 수신은 TikTok 수신과 독립적으로 재연결합니다. 키 누락·권한 오류·할당량 부족·채팅 비활성·방송 종료는 YouTube 영역에 표시합니다. 키를 수정한 경우 서버를 재시작해야 합니다. API 사용량은 Google Cloud 프로젝트에 귀속되며 연결과 재연결에도 할당량이 필요합니다.

@@ -226,6 +226,9 @@ def test_youtube_input_normalizes_to_video_id(value):
         "http://youtube.com/watch?v=abcdefghijk",
         "https://youtube.com/watch?v=abcdefghijk&v=01234567890",
         "https://youtube.com/@channel/live",
+        "https://youtu.be",
+        "https://youtu.be/",
+        "https://youtu.be//",
         "https://youtu.be/abcdefghijk/extra",
         "https://youtube.com/watch?v=too-short",
         "abcdefghijk/../../secret",
@@ -234,6 +237,14 @@ def test_youtube_input_normalizes_to_video_id(value):
 def test_youtube_input_rejects_unsupported_urls_and_ids(value):
     with pytest.raises(ValueError):
         AccountInput(session_id="test", username="valid", youtube_video_id=value)
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_empty_youtube_input_remains_optional(value):
+    assert (
+        AccountInput(session_id="test", username="valid", youtube_video_id=value).youtube_video_id
+        == ""
+    )
 
 
 def test_youtube_key_is_not_exposed_as_runtime_settings_or_status():

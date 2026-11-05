@@ -246,7 +246,6 @@ async def test_real_grpc_wire_and_cancellation(pipeline, monkeypatch):
 @pytest.mark.parametrize(
     "code",
     [
-        grpc.StatusCode.RESOURCE_EXHAUSTED,
         grpc.StatusCode.UNAUTHENTICATED,
         grpc.StatusCode.PERMISSION_DENIED,
     ],
@@ -283,6 +282,50 @@ async def test_missing_key_never_opens_network(pipeline, monkeypatch):
         client.assert_not_called()
     finally:
         await cancel(task)
+
+
+@pytest.mark.parametrize("lookup", ["ended", "disabled", "failed", "still_live"])
+async def test_grpc_precondition_checks_video_without_misreporting_permissions(
+    pipeline, monkeypatch, caplog, lookup
+):
+    stream, _, broadcaster = pipeline
+    calls = 0
+
+    def video(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1 or lookup == "still_live":
+            return live_video(request)
+        if lookup == "failed":
+            return httpx.Response(503, text="test-secret private-payload")
+        details = {"actualStartTime": "started"}
+        if lookup == "ended":
+            details["actualEndTime"] = "ended"
+        return httpx.Response(200, json={"items": [{"liveStreamingDetails": details}]})
+
+    clients = install_http(monkeypatch, video)
+    receive = AsyncMock(
+        side_effect=grpc.aio.AioRpcError(
+            grpc.StatusCode.FAILED_PRECONDITION, (), (), "Precondition check failed"
+        )
+    )
+    monkeypatch.setattr(stream, "_receive", receive)
+    task = asyncio.create_task(stream.run())
+    try:
+        await wait_for_status(broadcaster, "waiting" if lookup == "ended" else "error")
+        status = broadcaster.status.youtube
+        assert status.live.state == ("ended" if lookup == "ended" else "unknown")
+        assert "종료" in status.message if lookup != "disabled" else "비활성화" in status.message
+        assert "권한" not in status.message and "할당량" not in status.message
+        assert calls == 2
+        await asyncio.sleep(0.01)
+        receive.assert_awaited_once()
+        assert broadcaster.status.state == "connected"
+        assert "test-secret" not in broadcaster.status.model_dump_json() + caplog.text
+        assert "private-payload" not in caplog.text
+    finally:
+        await cancel(task)
+    assert clients[0].is_closed
 
 
 @pytest.mark.parametrize("status", [400, 401, 403])
@@ -387,8 +430,9 @@ async def test_scheduled_video_waits_then_connects(pipeline, monkeypatch):
         await cancel(task)
 
 
-async def test_transient_failure_retries_safely(pipeline, monkeypatch, caplog):
-    stream, _, broadcaster = pipeline
+@pytest.mark.parametrize("code", [grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.RESOURCE_EXHAUSTED])
+async def test_transient_failure_retries_safely(pipeline, monkeypatch, caplog, code):
+    stream, queue, broadcaster = pipeline
     install_http(monkeypatch, live_video)
     stream.delay = 0.001
     monkeypatch.setattr(youtube, "RETRY_MAX_SECONDS", 0.002)
@@ -399,9 +443,9 @@ async def test_transient_failure_retries_safely(pipeline, monkeypatch, caplog):
         nonlocal calls
         calls += 1
         if calls == 1:
-            raise grpc.aio.AioRpcError(
-                grpc.StatusCode.UNAVAILABLE, (), (), "test-secret private-payload"
-            )
+            raise grpc.aio.AioRpcError(code, (), (), "test-secret private-payload")
+        stream.sink.status("connected", "YouTube LIVE 연결됨")
+        stream.sink.publish(parse_comment(message(text="recovered")))
         retried.set()
         await asyncio.Event().wait()
 
@@ -410,6 +454,8 @@ async def test_transient_failure_retries_safely(pipeline, monkeypatch, caplog):
     try:
         await asyncio.wait_for(retried.wait(), 2)
         assert calls == 2
+        assert queue.get_nowait().comment == "recovered"
+        assert broadcaster.status.youtube.state == "connected"
         assert "test-secret" not in caplog.text
         assert "private-payload" not in caplog.text
         assert broadcaster.status.state == "connected"

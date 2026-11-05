@@ -298,4 +298,12 @@
     .comment.identified[data-platform='youtube'] {
         border-inline-start-color: var(--platform-youtube);
     }
+    @container (max-width: 200px) {
+        .comment.activity {
+            padding-inline: min(8%, calc(clamp(18px, 2.7vw, 30px) * var(--comment-scale, 1)));
+        }
+        .activity-label {
+            padding-inline: min(5%, calc(16px * var(--comment-scale, 1)));
+        }
+    }
 </style>

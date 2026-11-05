@@ -33,20 +33,37 @@
     const paneId = $props.id();
     const dividerSize = 12;
     let container: HTMLDivElement;
+    let width = $state(0);
+    let height = $state(0);
     let splitPercent = $state(50);
+    let minimum = $derived(
+        Math.min(
+            50,
+            Math.max(
+                20,
+                Math.ceil(
+                    ((sideBySide ? 140 : 240) /
+                        Math.max(1, (sideBySide ? width : height) - dividerSize)) *
+                        100,
+                ),
+            ),
+        ),
+    );
+    let maximum = $derived(100 - minimum);
+    let share = $derived(Math.max(minimum, Math.min(maximum, splitPercent)));
     let dragStart = 0;
     let dragStartPercent = 50;
     let dragSize = 1;
 
     function setSplit(percent: number) {
-        splitPercent = Math.max(20, Math.min(80, percent));
+        splitPercent = Math.max(minimum, Math.min(maximum, percent));
     }
 
     function startResize(event: PointerEvent) {
         if (!event.isPrimary || event.button !== 0) return;
         const handle = event.currentTarget as HTMLElement;
         dragStart = sideBySide ? event.clientX : event.clientY;
-        dragStartPercent = splitPercent;
+        dragStartPercent = share;
         dragSize = Math.max(
             1,
             (sideBySide ? container.clientWidth : container.clientHeight) - dividerSize,
@@ -73,10 +90,10 @@
     function resizeWithKeyboard(event: KeyboardEvent) {
         if (event.altKey || event.ctrlKey || event.metaKey) return;
         const percent = {
-            [sideBySide ? 'ArrowLeft' : 'ArrowUp']: splitPercent - 5,
-            [sideBySide ? 'ArrowRight' : 'ArrowDown']: splitPercent + 5,
-            Home: 20,
-            End: 80,
+            [sideBySide ? 'ArrowLeft' : 'ArrowUp']: share - 5,
+            [sideBySide ? 'ArrowRight' : 'ArrowDown']: share + 5,
+            Home: minimum,
+            End: maximum,
         }[event.key];
         if (percent === undefined) return;
         event.preventDefault();
@@ -107,7 +124,12 @@
         </div>
         <LiveSummary {source} {backend} {platform} />
         {#if feed.length}
-            <CommentList comments={feed} {fontScale} label={`${name} 실시간 댓글과 활동`} />
+            <CommentList
+                comments={feed}
+                {fontScale}
+                widthShare={sideBySide ? (isTikTok ? share : 100 - share) : 100}
+                label={`${name} 실시간 댓글과 활동`}
+            />
         {:else}
             <div class="empty" data-state={view.kind} role="status">
                 <h3>
@@ -130,78 +152,82 @@
         class:columns={sideBySide}
         data-layout={layout}
         bind:this={container}
-        style:--tiktok-share={`${splitPercent}fr`}
-        style:--youtube-share={`${100 - splitPercent}fr`}
+        bind:clientWidth={width}
+        bind:clientHeight={height}
+        style:--tiktok-share={`${share}fr`}
+        style:--youtube-share={`${100 - share}fr`}
         style:--divider-size={`${dividerSize}px`}
     >
-        {#if layout === 'combined'}
-            <section class="feed-pane" aria-label="통합 댓글 영역">
-                <div class="combined-status">
-                    <div class="combined-source">
-                        <p role="status" data-tone={tiktokView.tone}>
-                            <PlatformBadge platform="tiktok" />
-                            <span
-                                >{tiktokView.kind === 'error'
-                                    ? tiktokView.description
-                                    : tiktokView.label}</span
-                            >
-                        </p>
-                        <LiveSummary {source} {backend} />
-                    </div>
-                    {#if source.youtube}
+        {#key layout}
+            {#if layout === 'combined'}
+                <section class="feed-pane" aria-label="통합 댓글 영역">
+                    <div class="combined-status">
                         <div class="combined-source">
-                            <p role="status" data-tone={youtubeView.tone}>
-                                <PlatformBadge platform="youtube" />
+                            <p role="status" data-tone={tiktokView.tone}>
+                                <PlatformBadge platform="tiktok" />
                                 <span
-                                    >{youtubeView.kind === 'error'
-                                        ? youtubeView.description
-                                        : youtubeView.label}</span
+                                    >{tiktokView.kind === 'error'
+                                        ? tiktokView.description
+                                        : tiktokView.label}</span
                                 >
                             </p>
-                            <LiveSummary {source} {backend} platform="youtube" />
+                            <LiveSummary {source} {backend} />
+                        </div>
+                        {#if source.youtube}
+                            <div class="combined-source">
+                                <p role="status" data-tone={youtubeView.tone}>
+                                    <PlatformBadge platform="youtube" />
+                                    <span
+                                        >{youtubeView.kind === 'error'
+                                            ? youtubeView.description
+                                            : youtubeView.label}</span
+                                    >
+                                </p>
+                                <LiveSummary {source} {backend} platform="youtube" />
+                            </div>
+                        {/if}
+                    </div>
+                    {#if combined.length}
+                        <CommentList
+                            comments={combined}
+                            {fontScale}
+                            label="통합 실시간 댓글과 활동"
+                            showPlatform
+                        />
+                    {:else}
+                        <div class="empty" role="status">
+                            <h3>댓글을 기다리고 있어요.</h3>
+                            <p>연결된 방송의 댓글과 활동이 수신 순서대로 표시됩니다.</p>
                         </div>
                     {/if}
-                </div>
-                {#if combined.length}
-                    <CommentList
-                        comments={combined}
-                        {fontScale}
-                        label="통합 실시간 댓글과 활동"
-                        showPlatform
-                    />
-                {:else}
-                    <div class="empty" role="status">
-                        <h3>댓글을 기다리고 있어요.</h3>
-                        <p>연결된 방송의 댓글과 활동이 수신 순서대로 표시됩니다.</p>
-                    </div>
+                </section>
+            {:else}
+                {#if layout !== 'youtube'}{@render panel('tiktok')}{/if}
+                {#if layout === 'split' || sideBySide}
+                    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (The adjustable separator supports pointer and keyboard resizing with ARIA values.) -->
+                    <div
+                        class="feed-divider"
+                        role="separator"
+                        tabindex="0"
+                        aria-label="TikTok·YouTube 영역 크기 조절"
+                        aria-orientation={sideBySide ? 'vertical' : 'horizontal'}
+                        aria-controls={`${paneId}-tiktok ${paneId}-youtube`}
+                        aria-valuemin={minimum}
+                        aria-valuemax={maximum}
+                        aria-valuenow={Math.round(share)}
+                        aria-valuetext={`TikTok ${Math.round(share)}%, YouTube ${Math.round(100 - share)}%`}
+                        title={`드래그 또는 ${sideBySide ? '←→' : '↑↓'}로 영역 크기 조절 · 두 번 클릭하면 반반`}
+                        onpointerdown={startResize}
+                        onpointermove={resize}
+                        onpointerup={finishResize}
+                        onpointercancel={finishResize}
+                        onkeydown={resizeWithKeyboard}
+                        ondblclick={() => setSplit(50)}
+                    ></div>
                 {/if}
-            </section>
-        {:else}
-            {#if layout !== 'youtube'}{@render panel('tiktok')}{/if}
-            {#if layout === 'split' || sideBySide}
-                <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (The adjustable separator supports pointer and keyboard resizing with ARIA values.) -->
-                <div
-                    class="feed-divider"
-                    role="separator"
-                    tabindex="0"
-                    aria-label="TikTok·YouTube 영역 크기 조절"
-                    aria-orientation={sideBySide ? 'vertical' : 'horizontal'}
-                    aria-controls={`${paneId}-tiktok ${paneId}-youtube`}
-                    aria-valuemin={20}
-                    aria-valuemax={80}
-                    aria-valuenow={Math.round(splitPercent)}
-                    aria-valuetext={`TikTok ${Math.round(splitPercent)}%, YouTube ${Math.round(100 - splitPercent)}%`}
-                    title={`드래그 또는 ${sideBySide ? '←→' : '↑↓'}로 영역 크기 조절 · 두 번 클릭하면 반반`}
-                    onpointerdown={startResize}
-                    onpointermove={resize}
-                    onpointerup={finishResize}
-                    onpointercancel={finishResize}
-                    onkeydown={resizeWithKeyboard}
-                    ondblclick={() => setSplit(50)}
-                ></div>
+                {#if layout !== 'tiktok'}{@render panel('youtube')}{/if}
             {/if}
-            {#if layout !== 'tiktok'}{@render panel('youtube')}{/if}
-        {/if}
+        {/key}
     </div>
 </div>
 

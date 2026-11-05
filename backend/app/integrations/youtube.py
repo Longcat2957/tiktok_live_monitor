@@ -234,19 +234,39 @@ class YouTubeStream:
                     if code in {
                         grpc.StatusCode.UNAUTHENTICATED,
                         grpc.StatusCode.PERMISSION_DENIED,
-                        grpc.StatusCode.RESOURCE_EXHAUSTED,
                         grpc.StatusCode.INVALID_ARGUMENT,
                         grpc.StatusCode.NOT_FOUND,
                         grpc.StatusCode.FAILED_PRECONDITION,
                     }:
-                        ended = "liveChatEnded" in (exc.details() or "")
+                        ended = False
+                        message = "YouTube 채팅·API 권한·할당량을 확인해주세요"
+                        if code == grpc.StatusCode.FAILED_PRECONDITION:
+                            # gRPC uses the same error for ended and disabled chats.
+                            message = (
+                                "YouTube 방송이 종료되었거나 실시간 채팅이 비활성화되어 있습니다"
+                            )
+                            try:
+                                video = await self._video(client)
+                                ended = parse_live(video).state == "ended"
+                                details = video.get("liveStreamingDetails")
+                                if ended:
+                                    message = "YouTube 방송이 종료되었습니다"
+                                elif (
+                                    isinstance(details, dict)
+                                    and details.get("actualStartTime")
+                                    and not details.get("activeLiveChatId")
+                                ):
+                                    message = "YouTube 실시간 채팅이 비활성화되어 있습니다"
+                            except (
+                                YouTubeUnavailable,
+                                httpx.HTTPError,
+                                OSError,
+                                ValueError,
+                                TimeoutError,
+                            ):
+                                pass
                         self.sink.live(LiveInfo(state="ended" if ended else "unknown"))
-                        self.sink.status(
-                            "waiting" if ended else "error",
-                            "YouTube 방송이 종료되었습니다"
-                            if ended
-                            else "YouTube 채팅·API 권한·할당량을 확인해주세요",
-                        )
+                        self.sink.status("waiting" if ended else "error", message)
                         await asyncio.Event().wait()
                     self._retry_status(exc)
                 except (httpx.HTTPError, OSError, ValueError, TimeoutError) as exc:

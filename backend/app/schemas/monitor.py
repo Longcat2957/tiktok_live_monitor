@@ -44,7 +44,7 @@ class AccountInput(SessionInput):
                     match = re.fullmatch(r"/live/([A-Za-z0-9_-]{11})/?", url.path)
                     value = match[1] if match else "invalid"
             elif url.netloc == "youtu.be":
-                value = url.path.removeprefix("/").removesuffix("/")
+                value = url.path.removeprefix("/").removesuffix("/") or "invalid"
             else:
                 value = "invalid"
         if value and not re.fullmatch(r"[A-Za-z0-9_-]{11}", value):

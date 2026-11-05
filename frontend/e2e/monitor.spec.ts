@@ -11,6 +11,62 @@ const giftPng = Buffer.from(
     'base64',
 );
 
+async function selectFeedLayout(page: Page, label: string) {
+    const summary = page.locator('.view-options > summary');
+    await summary.click();
+    await page.getByRole('group', { name: '댓글 보기' }).getByText(label, { exact: true }).click();
+    await summary.click();
+}
+
+async function loadSplitFeed(page: Page) {
+    await page.routeWebSocket('**/ws', (socket) => {
+        socket.send(
+            JSON.stringify({
+                type: 'status',
+                source: 'tiktok',
+                state: 'connected',
+                message: '',
+                session_id: 'split-regression',
+                username: 'broadcast_account',
+                comment_history_size: 30,
+                live: { state: 'live', viewers: 1200, likes: 4000 },
+                youtube: {
+                    video_id: 'abcdefghijk',
+                    state: 'connected',
+                    message: '',
+                    live: { state: 'live', viewers: 800, likes: 2300 },
+                },
+            }),
+        );
+        for (let index = 0; index < 30; index++) {
+            for (const platform of ['tiktok', 'youtube']) {
+                socket.send(
+                    JSON.stringify({
+                        platform,
+                        id: `${platform}-${index}`,
+                        received_at: '2026-11-05T12:00:00Z',
+                        user: { nickname: `시청자 ${index}`, unique_id: String(index) },
+                        ...(platform === 'tiktok' && index === 20
+                            ? {
+                                  type: 'activity',
+                                  kind: 'gift',
+                                  gift_name: '장미',
+                                  count: 12,
+                                  gift_image_url: '/demo-gift-rose.webp',
+                              }
+                            : {
+                                  type: 'comment',
+                                  comment: `댓글 ${index} · 긴 댓글도 각 플랫폼에서 독립적으로 읽을 수 있습니다.`,
+                              }),
+                    }),
+                );
+            }
+        }
+    });
+    await page.goto('/');
+    await expect(page.locator('.comment')).toHaveCount(60);
+}
+
 async function change(request: APIRequestContext, method: string, path: string, body = {}) {
     const { session_id } = await (await request.get('/config')).json();
     const response = await request.fetch(path, { method, data: { session_id, ...body } });
@@ -2019,8 +2075,10 @@ test('split feeds scroll and resize independently without changing receivers or 
 
     const divider = page.getByRole('separator', { name: 'TikTok·YouTube 영역 크기 조절' });
     await expect(divider).toHaveAttribute('aria-orientation', 'horizontal');
-    await expect(divider).toHaveAttribute('aria-valuemin', '20');
-    await expect(divider).toHaveAttribute('aria-valuemax', '80');
+    let minimum = Number(await divider.getAttribute('aria-valuemin'));
+    let maximum = Number(await divider.getAttribute('aria-valuemax'));
+    expect(minimum).toBeGreaterThanOrEqual(20);
+    expect(maximum).toBe(100 - minimum);
     await expect(divider).toHaveAttribute('aria-valuenow', '50');
     const before = [await tiktok.boundingBox(), await youtube.boundingBox()];
     const history = await page
@@ -2050,19 +2108,19 @@ test('split feeds scroll and resize independently without changing receivers or 
     await drag(-150);
     expect((await tiktok.boundingBox())!.height).toBeLessThan(after[0]!.height - 100);
     await drag(2000);
-    await expect(divider).toHaveAttribute('aria-valuenow', '80');
+    await expect(divider).toHaveAttribute('aria-valuenow', String(maximum));
     await drag(-2000);
-    await expect(divider).toHaveAttribute('aria-valuenow', '20');
+    await expect(divider).toHaveAttribute('aria-valuenow', String(minimum));
     await divider.focus();
     await page.keyboard.press('ArrowUp');
-    await expect(divider).toHaveAttribute('aria-valuenow', '20');
+    await expect(divider).toHaveAttribute('aria-valuenow', String(minimum));
     await page.keyboard.press('ArrowDown');
-    await expect(divider).toHaveAttribute('aria-valuenow', '25');
+    await expect(divider).toHaveAttribute('aria-valuenow', String(minimum + 5));
     await page.keyboard.press('End');
     await page.keyboard.press('ArrowDown');
-    await expect(divider).toHaveAttribute('aria-valuenow', '80');
+    await expect(divider).toHaveAttribute('aria-valuenow', String(maximum));
     await page.keyboard.press('Home');
-    await expect(divider).toHaveAttribute('aria-valuenow', '20');
+    await expect(divider).toHaveAttribute('aria-valuenow', String(minimum));
     await divider.dblclick();
     await expect(divider).toHaveAttribute('aria-valuenow', '50');
     await divider.focus();
@@ -2085,6 +2143,8 @@ test('split feeds scroll and resize independently without changing receivers or 
     }
     await select('좌우 분할');
     await expect(divider).toHaveAttribute('aria-orientation', 'vertical');
+    minimum = Number(await divider.getAttribute('aria-valuemin'));
+    maximum = Number(await divider.getAttribute('aria-valuemax'));
     await expect(divider).toHaveAttribute('aria-valuenow', '65');
     const widths = [(await tiktok.boundingBox())!.width, (await youtube.boundingBox())!.width];
     await drag(-100, true);
@@ -2096,11 +2156,11 @@ test('split feeds scroll and resize independently without changing receivers or 
     await divider.focus();
     await page.keyboard.press('Home');
     await page.keyboard.press('ArrowRight');
-    await expect(divider).toHaveAttribute('aria-valuenow', '25');
+    await expect(divider).toHaveAttribute('aria-valuenow', String(minimum + 5));
     await page.keyboard.press('ArrowLeft');
-    await expect(divider).toHaveAttribute('aria-valuenow', '20');
+    await expect(divider).toHaveAttribute('aria-valuenow', String(minimum));
     await page.keyboard.press('End');
-    await expect(divider).toHaveAttribute('aria-valuenow', '80');
+    await expect(divider).toHaveAttribute('aria-valuenow', String(maximum));
     await divider.dblclick();
     await expect(divider).toHaveAttribute('aria-valuenow', '50');
     for (let step = 0; step < 3; step++) await page.keyboard.press('ArrowRight');
@@ -2115,7 +2175,12 @@ test('split feeds scroll and resize independently without changing receivers or 
     ).toEqual(history);
     await page.screenshot({ path: '/tmp/split-divider-720.png', animations: 'disabled' });
     await page.setViewportSize({ width: 320, height: 844 });
+    await expect
+        .poll(async () => Number(await divider.getAttribute('aria-valuenow')))
+        .toBeLessThan(65);
+    await page.setViewportSize({ width: 720, height: 1280 });
     await expect(divider).toHaveAttribute('aria-valuenow', '65');
+    await page.setViewportSize({ width: 320, height: 844 });
     const handle = (await divider.boundingBox())!;
     expect(handle.height).toBeGreaterThanOrEqual(44);
     expect(handle.x).toBeGreaterThanOrEqual(0);
@@ -2137,4 +2202,174 @@ test('split feeds scroll and resize independently without changing receivers or 
     await expect(page.locator('.comment')).toHaveCount(0);
     expect(connections).toBe(1);
     expect(mutations).toBe(0);
+});
+
+for (const scale of [100, 200]) {
+    test(`split extrema keep comments and reading controls usable at ${scale}%`, async ({
+        page,
+    }) => {
+        await page.setViewportSize({ width: 320, height: 844 });
+        await page.addInitScript(
+            (value) => localStorage.setItem('monitor-font-scale', String(value)),
+            scale,
+        );
+        await loadSplitFeed(page);
+        const divider = page.getByRole('separator');
+        for (const width of [320, 720]) {
+            await page.setViewportSize({ width, height: width === 320 ? 844 : 1280 });
+            for (const layout of ['상하 분할', '좌우 분할']) {
+                await selectFeedLayout(page, layout);
+                for (const pane of await page.locator('.feed-pane').all()) {
+                    await pane.locator('.comment-viewport').press('Home');
+                    await expect(pane.getByRole('button', { name: '최신 댓글로' })).toBeVisible();
+                }
+                for (const key of ['Home', 'End']) {
+                    await divider.press(key);
+                    await expect
+                        .poll(() =>
+                            page.locator('.feed-pane').evaluateAll((panes) =>
+                                panes.every((pane) => {
+                                    const viewport =
+                                        pane.querySelector<HTMLElement>('.comment-viewport')!;
+                                    const button = pane.querySelector<HTMLElement>(
+                                        '.reading-controls button',
+                                    )!;
+                                    const bounds = pane.getBoundingClientRect();
+                                    const controls = button.getBoundingClientRect();
+                                    return (
+                                        viewport.clientHeight >= 44 &&
+                                        viewport.scrollWidth <= viewport.clientWidth &&
+                                        controls.bottom <= bounds.bottom &&
+                                        controls.right <= bounds.right &&
+                                        controls.left >= bounds.left
+                                    );
+                                }),
+                            ),
+                        )
+                        .toBe(true);
+                    const percent = Number(await divider.getAttribute('aria-valuenow'));
+                    const actual = await page
+                        .locator('.feed-pane')
+                        .evaluateAll((panes, horizontal) => {
+                            const sizes = panes.map((pane) =>
+                                horizontal
+                                    ? pane.getBoundingClientRect().width
+                                    : pane.getBoundingClientRect().height,
+                            );
+                            return (sizes[0] / (sizes[0] + sizes[1])) * 100;
+                        }, layout === '좌우 분할');
+                    expect(Math.abs(percent - actual)).toBeLessThan(1);
+                }
+            }
+        }
+    });
+}
+
+test('column resizing preserves the comment being read and the other feed follows newest', async ({
+    page,
+}) => {
+    await page.setViewportSize({ width: 720, height: 1280 });
+    await page.addInitScript(() => localStorage.setItem('monitor-font-scale', '200'));
+    await loadSplitFeed(page);
+    await selectFeedLayout(page, '좌우 분할');
+    const tiktok = page.locator('.feed-pane[data-platform="tiktok"]');
+    const youtube = page.locator('.feed-pane[data-platform="youtube"] .comment-viewport');
+    const viewport = tiktok.locator('.comment-viewport');
+    await viewport.press('PageUp');
+    await expect(tiktok.getByRole('button', { name: '최신 댓글로' })).toBeVisible();
+    await viewport.evaluate((node) => {
+        const target = node.querySelector('[data-comment-id="tiktok-15"]')!;
+        node.scrollTop +=
+            target.getBoundingClientRect().top - node.getBoundingClientRect().top + 13;
+    });
+    const anchor = () =>
+        viewport.evaluate((node) => {
+            const top = node.getBoundingClientRect().top;
+            const row = [...node.querySelectorAll('[data-comment-id]')].find(
+                (item) => item.getBoundingClientRect().bottom > top + 1,
+            )!;
+            return {
+                id: row.getAttribute('data-comment-id'),
+                offset: row.getBoundingClientRect().top - top,
+            };
+        });
+    await expect.poll(async () => (await anchor()).id).toBe('tiktok-15');
+    const original = await anchor();
+    const history = await page
+        .locator('.comment')
+        .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-comment-id')));
+    const divider = page.getByRole('separator');
+    for (const key of ['End', 'Home', 'ArrowRight']) {
+        await divider.press(key);
+        await expect
+            .poll(async () => {
+                const current = await anchor();
+                return current.id === original.id && Math.abs(current.offset - original.offset) < 2;
+            })
+            .toBe(true);
+        await expect(tiktok.getByRole('button', { name: '최신 댓글로' })).toBeVisible();
+        await expect
+            .poll(() =>
+                youtube.evaluate((node) =>
+                    Math.abs(node.scrollHeight - node.clientHeight - node.scrollTop),
+                ),
+            )
+            .toBeLessThanOrEqual(1);
+    }
+    const bounds = (await divider.boundingBox())!;
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + bounds.width / 2 + 100, bounds.y + bounds.height / 2, {
+        steps: 5,
+    });
+    await page.mouse.up();
+    await expect
+        .poll(async () => {
+            const current = await anchor();
+            return current.id === original.id && Math.abs(current.offset - original.offset) < 2;
+        })
+        .toBe(true);
+    expect(
+        await page
+            .locator('.comment')
+            .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-comment-id'))),
+    ).toEqual(history);
+});
+
+test('changing feed view starts at newest while keeping the split ratio and history', async ({
+    page,
+}) => {
+    await page.setViewportSize({ width: 720, height: 1280 });
+    await page.addInitScript(() => localStorage.setItem('monitor-font-scale', '200'));
+    await loadSplitFeed(page);
+    const divider = page.getByRole('separator');
+    await divider.press('ArrowDown');
+    await divider.press('ArrowDown');
+    for (const label of [
+        'TikTok',
+        '상하 분할',
+        '좌우 분할',
+        'YouTube',
+        '상하 분할',
+        '통합',
+        '상하 분할',
+    ]) {
+        for (const viewport of await page.locator('.comment-viewport').all())
+            await viewport.press('Home');
+        await expect(page.locator('.reading-controls').first()).toBeVisible();
+        await selectFeedLayout(page, label);
+        await expect(page.locator('.reading-controls')).toHaveCount(0);
+        for (const viewport of await page.locator('.comment-viewport').all()) {
+            await expect
+                .poll(() =>
+                    viewport.evaluate((node) =>
+                        Math.abs(node.scrollHeight - node.clientHeight - node.scrollTop),
+                    ),
+                )
+                .toBeLessThanOrEqual(1);
+        }
+        const split = ['상하 분할', '좌우 분할'].includes(label);
+        await expect(page.locator('.comment')).toHaveCount(split ? 60 : 30);
+        if (split) await expect(divider).toHaveAttribute('aria-valuenow', '60');
+    }
 });

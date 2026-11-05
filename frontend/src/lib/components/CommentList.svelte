@@ -8,11 +8,13 @@
         fontScale,
         label = '실시간 댓글과 활동',
         showPlatform = false,
+        widthShare = 100,
     }: {
         comments: FeedMessage[];
         fontScale: number;
         label?: string;
         showPlatform?: boolean;
+        widthShare?: number;
     } = $props();
     const helpId = $props.id();
     let viewport: HTMLDivElement;
@@ -86,6 +88,7 @@
 
     $effect.pre(() => {
         void fontScale; // Track scale changes before measuring the reading anchor.
+        void widthShare; // Measure before a divider change reflows the rows.
         const current = comments;
         const added =
             current.length - (lastId ? current.findIndex((item) => item.id === lastId) + 1 : 0);
@@ -190,6 +193,7 @@
 
 <style>
     .comment-viewport {
+        container-type: inline-size;
         flex: 1;
         min-height: 0;
         overflow: auto;
@@ -219,6 +223,7 @@
     .reading-controls {
         flex-shrink: 0;
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
@@ -235,6 +240,8 @@
     }
     .reading-controls :global(button) {
         flex-shrink: 0;
+        max-width: 100%;
+        white-space: normal;
     }
     .sr-only {
         position: absolute;
